@@ -13,6 +13,23 @@ import { worldRoutes } from './routes/world.js';
 
 const app = Fastify({ logger: true });
 
+const requiredTables = [
+  'players',
+  'wallets',
+  'wallet_transactions',
+  'player_geology_skills',
+  'world_cells',
+  'resources',
+  'resource_deposits',
+  'territory_claims',
+  'buildings',
+  'player_inventory',
+  'inventory_transactions',
+  'extraction_operations',
+] as const;
+
+const requiredExtensions = ['postgis', 'h3'] as const;
+
 app.get('/health', async () => {
   const result = await db.query<{ now: string; database_name: string }>(
     'select now()::text as now, current_database() as database_name',
@@ -23,6 +40,44 @@ app.get('/health', async () => {
     service: 'geo-empire-api',
     database: result.rows[0]?.database_name,
     databaseTime: result.rows[0]?.now,
+  };
+});
+
+app.get('/ready', async (_request, reply) => {
+  const [tableResult, extensionResult] = await Promise.all([
+    db.query<{ table_name: string }>(
+      `
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = ANY($1::text[])
+      `,
+      [[...requiredTables]],
+    ),
+    db.query<{ extname: string }>(
+      'SELECT extname FROM pg_extension WHERE extname = ANY($1::text[])',
+      [[...requiredExtensions]],
+    ),
+  ]);
+
+  const presentTables = new Set(tableResult.rows.map((row) => row.table_name));
+  const presentExtensions = new Set(extensionResult.rows.map((row) => row.extname));
+  const missingTables = requiredTables.filter((name) => !presentTables.has(name));
+  const missingExtensions = requiredExtensions.filter((name) => !presentExtensions.has(name));
+
+  if (missingTables.length || missingExtensions.length) {
+    return reply.code(503).send({
+      status: 'not_ready',
+      service: 'geo-empire-api',
+      missingTables,
+      missingExtensions,
+    });
+  }
+
+  return {
+    status: 'ready',
+    service: 'geo-empire-api',
+    tables: requiredTables.length,
+    extensions: [...requiredExtensions],
   };
 });
 
