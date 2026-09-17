@@ -1,5 +1,7 @@
 import Fastify from 'fastify';
 import { closeDatabase, db } from './db.js';
+import { geologyRoutes } from './routes/geology.js';
+import { worldRoutes } from './routes/world.js';
 
 const app = Fastify({ logger: true });
 
@@ -31,6 +33,9 @@ app.get('/api/v1/world/status', async () => {
     buildings: Number(buildings.rows[0]?.count ?? 0),
   };
 });
+
+await app.register(worldRoutes, { prefix: '/api/v1/world' });
+await app.register(geologyRoutes, { prefix: '/api/v1/geology' });
 
 const port = Number(process.env.PORT ?? 4000);
 const host = process.env.HOST ?? '0.0.0.0';
