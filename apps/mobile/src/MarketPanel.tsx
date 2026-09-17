@@ -40,7 +40,9 @@ export function MarketPanel({ onMessage, onSold }: Props) {
     try {
       const result = await sellResource({ resourceId: offer.resourceId, quantity });
       onMessage?.(
-        `Продано ${formatNumber(result.quantity)} ${result.resource.unit} · ${result.resource.name} · +${formatNumber(result.proceeds, 0)} ₡`,
+        result.debtRepayment > 0
+          ? `Продано ${formatNumber(result.quantity)} ${result.resource.unit} · валовая ${formatNumber(result.grossProceeds, 0)} ₡ · кредит −${formatNumber(result.debtRepayment, 0)} ₡ · в кассу +${formatNumber(result.netProceeds, 0)} ₡`
+          : `Продано ${formatNumber(result.quantity)} ${result.resource.unit} · ${result.resource.name} · +${formatNumber(result.netProceeds, 0)} ₡`,
       );
       await Promise.resolve(onSold?.());
       await refresh();
@@ -72,6 +74,19 @@ export function MarketPanel({ onMessage, onSold }: Props) {
         </View>
         <Text style={styles.balance}>{catalog.wallet.soft.toLocaleString('ru-RU')} ₡</Text>
       </View>
+
+      {catalog.debt.outstanding > 0 ? (
+        <View style={styles.debtBox}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flex}>
+              <Text style={styles.debtEyebrow}>ПРОЕКТНОЕ ФИНАНСИРОВАНИЕ</Text>
+              <Text style={styles.debtTitle}>Остаток долга: {formatNumber(catalog.debt.outstanding, 0)} ₡</Text>
+            </View>
+            <Text style={styles.debtShare}>{Math.round(catalog.debt.saleRepaymentShare * 100)}%</Text>
+          </View>
+          <Text style={styles.debtText}>Эта доля каждой продажи автоматически направляется на погашение активных проектных кредитов.</Text>
+        </View>
+      ) : null}
 
       {catalog.offers.length ? catalog.offers.map((offer) => {
         const busy = sellingId === offer.resourceId;
@@ -159,6 +174,11 @@ const styles = StyleSheet.create({
   title: { color: '#f6f7f9', fontSize: 16, fontWeight: '900', marginTop: 3 },
   description: { color: '#8f9baa', fontSize: 10, lineHeight: 14, marginTop: 4 },
   balance: { color: '#f5c451', fontSize: 12, fontWeight: '900' },
+  debtBox: { padding: 11, borderRadius: 12, backgroundColor: 'rgba(121,199,255,0.07)', borderWidth: 1, borderColor: 'rgba(121,199,255,0.2)' },
+  debtEyebrow: { color: '#79c7ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  debtTitle: { color: '#e4edf2', fontSize: 11, fontWeight: '900', marginTop: 3 },
+  debtShare: { color: '#f5c451', fontSize: 17, fontWeight: '900' },
+  debtText: { color: '#84939f', fontSize: 8, lineHeight: 12, marginTop: 6 },
   offerCard: { padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.045)', borderWidth: 1, borderColor: 'rgba(28,123,110,0.32)' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
   offerName: { color: '#f3f4f6', fontSize: 13, fontWeight: '900' },
