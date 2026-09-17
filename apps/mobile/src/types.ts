@@ -25,6 +25,21 @@ export type LocateResponse = {
   cells: WorldCell[];
 };
 
+export type PlayerSummary = {
+  id: string;
+  displayName: string;
+  companyName: string | null;
+  wallet: { soft: number; premium: number };
+  geology: {
+    range: number;
+    coverage: number;
+    depth: number;
+    accuracy: number;
+    sensitivity: number;
+  };
+  stats: { territories: number; buildings: number; knownDeposits: number };
+};
+
 export type GeologyDeposit = {
   id: string;
   h3Index: string;
