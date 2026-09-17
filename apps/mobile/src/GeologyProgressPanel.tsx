@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getGeologyUpgrades, upgradeGeology } from './api';
+import { MarketPanel } from './MarketPanel';
 import type { GeologySkillKey, GeologyUpgradeCatalog, GeologyUpgradeOption } from './types';
 
 type Props = {
@@ -24,6 +25,7 @@ function formatValue(option: GeologyUpgradeOption, value: number | null): string
 }
 
 export function GeologyProgressPanel({ onMessage }: Props) {
+  const [section, setSection] = useState<'geology' | 'market'>('geology');
   const [catalog, setCatalog] = useState<GeologyUpgradeCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<GeologySkillKey | null>(null);
@@ -58,78 +60,96 @@ export function GeologyProgressPanel({ onMessage }: Props) {
     }
   }, [onMessage, refresh]);
 
-  if (loading && !catalog) {
-    return (
-      <View style={styles.loadingBox}>
-        <ActivityIndicator />
-        <Text style={styles.muted}>Загрузка геологических технологий…</Text>
-      </View>
-    );
-  }
-
-  if (!catalog) return null;
-
   return (
     <View style={styles.panel}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.eyebrow}>ГЕОЛОГИЧЕСКАЯ СЛУЖБА</Text>
-          <Text style={styles.title}>Технологии разведки</Text>
-        </View>
-        <View style={styles.wallet}>
-          <Text style={styles.walletSoft}>{catalog.wallet.soft.toLocaleString('ru-RU')} ₡</Text>
-          <Text style={styles.walletPremium}>{catalog.wallet.premium.toLocaleString('ru-RU')} ◆</Text>
-        </View>
+      <View style={styles.tabs}>
+        <Pressable
+          onPress={() => setSection('geology')}
+          style={[styles.tab, section === 'geology' && styles.tabActive]}
+        >
+          <Text style={[styles.tabText, section === 'geology' && styles.tabTextActive]}>ГЕОЛОГИЯ</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setSection('market')}
+          style={[styles.tab, section === 'market' && styles.tabMarketActive]}
+        >
+          <Text style={[styles.tabText, section === 'market' && styles.tabTextActive]}>РЫНОК</Text>
+        </Pressable>
       </View>
 
-      {catalog.upgrades.map((option) => {
-        const meta = skillLabels[option.skill];
-        const busy = upgrading === option.skill;
-        const softDisabled = busy || option.maxed || !option.price || catalog.wallet.soft < option.price.soft;
-        const premiumDisabled = busy || option.maxed || !option.price || catalog.wallet.premium < option.price.premium;
-
-        return (
-          <View key={option.skill} style={styles.skillCard}>
-            <View style={styles.skillHeader}>
-              <View style={styles.skillText}>
-                <Text style={styles.skillTitle}>{meta.title}</Text>
-                <Text style={styles.description}>{meta.description}</Text>
-              </View>
-              <Text style={styles.level}>LV {option.currentLevel}/10</Text>
+      {section === 'market' ? (
+        <MarketPanel
+          onMessage={onMessage}
+          onSold={refresh}
+        />
+      ) : loading && !catalog ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator />
+          <Text style={styles.muted}>Загрузка геологических технологий…</Text>
+        </View>
+      ) : catalog ? (
+        <>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.eyebrow}>ГЕОЛОГИЧЕСКАЯ СЛУЖБА</Text>
+              <Text style={styles.title}>Технологии разведки</Text>
             </View>
-
-            <View style={styles.valueRow}>
-              <Text style={styles.currentValue}>{formatValue(option, option.currentValue)}</Text>
-              <Text style={styles.arrow}>→</Text>
-              <Text style={styles.nextValue}>{formatValue(option, option.nextValue)}</Text>
+            <View style={styles.wallet}>
+              <Text style={styles.walletSoft}>{catalog.wallet.soft.toLocaleString('ru-RU')} ₡</Text>
+              <Text style={styles.walletPremium}>{catalog.wallet.premium.toLocaleString('ru-RU')} ◆</Text>
             </View>
-
-            {option.maxed ? (
-              <Text style={styles.maxed}>МАКСИМАЛЬНЫЙ УРОВЕНЬ</Text>
-            ) : option.price ? (
-              <View style={styles.buttonRow}>
-                <UpgradeButton
-                  disabled={softDisabled}
-                  busy={busy}
-                  label={`${option.price.soft.toLocaleString('ru-RU')} ₡`}
-                  onPress={() => void buy(option.skill, 'soft')}
-                />
-                <UpgradeButton
-                  disabled={premiumDisabled}
-                  busy={busy}
-                  premium
-                  label={`${option.price.premium} ◆`}
-                  onPress={() => void buy(option.skill, 'premium')}
-                />
-              </View>
-            ) : null}
           </View>
-        );
-      })}
 
-      <Text style={styles.note}>
-        Все уровни доступны за игровую валюту. Премиум-валюта только ускоряет развитие и не даёт эксклюзивной геологии.
-      </Text>
+          {catalog.upgrades.map((option) => {
+            const meta = skillLabels[option.skill];
+            const busy = upgrading === option.skill;
+            const softDisabled = busy || option.maxed || !option.price || catalog.wallet.soft < option.price.soft;
+            const premiumDisabled = busy || option.maxed || !option.price || catalog.wallet.premium < option.price.premium;
+
+            return (
+              <View key={option.skill} style={styles.skillCard}>
+                <View style={styles.skillHeader}>
+                  <View style={styles.skillText}>
+                    <Text style={styles.skillTitle}>{meta.title}</Text>
+                    <Text style={styles.description}>{meta.description}</Text>
+                  </View>
+                  <Text style={styles.level}>LV {option.currentLevel}/10</Text>
+                </View>
+
+                <View style={styles.valueRow}>
+                  <Text style={styles.currentValue}>{formatValue(option, option.currentValue)}</Text>
+                  <Text style={styles.arrow}>→</Text>
+                  <Text style={styles.nextValue}>{formatValue(option, option.nextValue)}</Text>
+                </View>
+
+                {option.maxed ? (
+                  <Text style={styles.maxed}>МАКСИМАЛЬНЫЙ УРОВЕНЬ</Text>
+                ) : option.price ? (
+                  <View style={styles.buttonRow}>
+                    <UpgradeButton
+                      disabled={softDisabled}
+                      busy={busy}
+                      label={`${option.price.soft.toLocaleString('ru-RU')} ₡`}
+                      onPress={() => void buy(option.skill, 'soft')}
+                    />
+                    <UpgradeButton
+                      disabled={premiumDisabled}
+                      busy={busy}
+                      premium
+                      label={`${option.price.premium} ◆`}
+                      onPress={() => void buy(option.skill, 'premium')}
+                    />
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
+
+          <Text style={styles.note}>
+            Все уровни доступны за игровую валюту. Премиум-валюта только ускоряет развитие и не даёт эксклюзивной геологии.
+          </Text>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -165,7 +185,13 @@ function UpgradeButton({
 
 const styles = StyleSheet.create({
   panel: { marginTop: 14, gap: 9 },
-  loadingBox: { marginTop: 14, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  tabs: { flexDirection: 'row', gap: 8, padding: 3, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
+  tab: { flex: 1, minHeight: 34, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
+  tabActive: { backgroundColor: 'rgba(245,196,81,0.16)' },
+  tabMarketActive: { backgroundColor: 'rgba(119,217,189,0.14)' },
+  tabText: { color: '#7f8997', fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+  tabTextActive: { color: '#f3f4f6' },
+  loadingBox: { padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
   eyebrow: { color: '#8d99a8', fontSize: 10, letterSpacing: 1.4, fontWeight: '700' },
   title: { color: '#f6f7f9', fontSize: 16, fontWeight: '900', marginTop: 3 },

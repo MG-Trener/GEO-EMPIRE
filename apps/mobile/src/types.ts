@@ -189,3 +189,30 @@ export type InventoryItem = {
   quantity: number;
   updatedAt: string;
 };
+
+export type MarketOffer = {
+  resourceId: number;
+  code: string;
+  name: string;
+  unit: string;
+  rarity: number;
+  quantity: number;
+  pricePerUnit: number;
+  totalValue: number;
+};
+
+export type MarketCatalog = {
+  playerId: string;
+  wallet: { soft: number; premium: number };
+  offers: MarketOffer[];
+};
+
+export type MarketSaleResponse = {
+  status: 'sold';
+  resource: { id: number; code: string; name: string; unit: string };
+  quantity: number;
+  pricePerUnit: number;
+  proceeds: number;
+  inventoryQuantity: number;
+  wallet: { soft: number; premium: number };
+};
