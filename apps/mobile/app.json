@@ -20,7 +20,6 @@
     "android": {
       "package": "kz.geoempire.game",
       "versionCode": 1,
-      "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
