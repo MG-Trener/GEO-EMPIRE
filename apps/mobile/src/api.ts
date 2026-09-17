@@ -15,8 +15,12 @@ import type {
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
 
-export const DEMO_PLAYER_ID =
+export let DEMO_PLAYER_ID =
   process.env.EXPO_PUBLIC_DEMO_PLAYER_ID ?? '11111111-1111-4111-8111-111111111111';
+
+export function setActivePlayerId(playerId: string): void {
+  DEMO_PLAYER_ID = playerId;
+}
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -28,6 +32,22 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 
   return body as T;
+}
+
+export async function bootstrapPlayer(input: {
+  authSubject: string;
+  displayName?: string;
+  companyName?: string;
+}): Promise<{
+  status: 'existing' | 'created';
+  starterGrant: { soft: number; premium: number } | null;
+  player: PlayerSummary;
+}> {
+  return requestJson(`${API_URL}/api/v1/onboarding/bootstrap`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
 
 export async function locateWorld(lat: number, lng: number, ring = 2): Promise<LocateResponse> {
