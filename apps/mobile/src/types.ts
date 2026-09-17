@@ -99,3 +99,53 @@ export type GeologyScanResponse = {
     };
   }>;
 };
+
+export type ExtractionResource = {
+  code: string;
+  name: string;
+  unit: string;
+};
+
+export type ExtractionStatus = {
+  buildingId: string;
+  status: 'running' | 'paused' | 'depleted';
+  ratePerHour: number;
+  maxBufferHours: number;
+  availableToCollect: number;
+  lastCollectedAt: string;
+  deposit: {
+    id: string;
+    resource: ExtractionResource;
+    quantityRemaining: number;
+  };
+};
+
+export type StartExtractionResponse = {
+  status: 'running';
+  buildingId: string;
+  deposit: {
+    id: string;
+    resource: ExtractionResource;
+    quantityRemaining: number;
+  };
+  ratePerHour: number;
+  maxBufferHours: number;
+};
+
+export type CollectExtractionResponse = {
+  status: 'running' | 'paused' | 'depleted';
+  buildingId: string;
+  collected: number;
+  resource: ExtractionResource;
+  inventoryQuantity: number;
+  depositQuantityRemaining: number;
+};
+
+export type InventoryItem = {
+  resourceId: number;
+  code: string;
+  name: string;
+  unit: string;
+  quantity: number;
+  updatedAt: string;
+};
