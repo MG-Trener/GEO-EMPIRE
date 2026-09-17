@@ -1,0 +1,17 @@
+{
+  "name": "geo-empire",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace @geo-empire/api run dev",
+    "build:api": "npm --workspace @geo-empire/api run build",
+    "typecheck": "npm --workspaces run typecheck --if-present"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
