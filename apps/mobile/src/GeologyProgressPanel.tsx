@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getGeologyUpgrades, upgradeGeology } from './api';
+import { KnownDepositsPanel } from './KnownDepositsPanel';
 import { MarketPanel } from './MarketPanel';
 import { StorePanel } from './StorePanel';
 import type { GeologySkillKey, GeologyUpgradeCatalog, GeologyUpgradeOption } from './types';
@@ -26,7 +27,7 @@ function formatValue(option: GeologyUpgradeOption, value: number | null): string
 }
 
 export function GeologyProgressPanel({ onMessage }: Props) {
-  const [section, setSection] = useState<'geology' | 'market' | 'store'>('geology');
+  const [section, setSection] = useState<'geology' | 'deposits' | 'market' | 'store'>('geology');
   const [catalog, setCatalog] = useState<GeologyUpgradeCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<GeologySkillKey | null>(null);
@@ -68,7 +69,13 @@ export function GeologyProgressPanel({ onMessage }: Props) {
           onPress={() => setSection('geology')}
           style={[styles.tab, section === 'geology' && styles.tabActive]}
         >
-          <Text style={[styles.tabText, section === 'geology' && styles.tabTextActive]}>ГЕОЛОГИЯ</Text>
+          <Text style={[styles.tabText, section === 'geology' && styles.tabTextActive]}>ТЕХНОЛОГИИ</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setSection('deposits')}
+          style={[styles.tab, section === 'deposits' && styles.tabDepositsActive]}
+        >
+          <Text style={[styles.tabText, section === 'deposits' && styles.tabTextActive]}>ЗАЛЕЖИ</Text>
         </Pressable>
         <Pressable
           onPress={() => setSection('market')}
@@ -84,7 +91,9 @@ export function GeologyProgressPanel({ onMessage }: Props) {
         </Pressable>
       </View>
 
-      {section === 'market' ? (
+      {section === 'deposits' ? (
+        <KnownDepositsPanel onMessage={onMessage} />
+      ) : section === 'market' ? (
         <MarketPanel
           onMessage={onMessage}
           onSold={refresh}
@@ -197,12 +206,13 @@ function UpgradeButton({
 
 const styles = StyleSheet.create({
   panel: { marginTop: 14, gap: 9 },
-  tabs: { flexDirection: 'row', gap: 6, padding: 3, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
+  tabs: { flexDirection: 'row', gap: 5, padding: 3, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
   tab: { flex: 1, minHeight: 34, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   tabActive: { backgroundColor: 'rgba(245,196,81,0.16)' },
+  tabDepositsActive: { backgroundColor: 'rgba(105,169,149,0.17)' },
   tabMarketActive: { backgroundColor: 'rgba(119,217,189,0.14)' },
   tabStoreActive: { backgroundColor: 'rgba(184,138,221,0.16)' },
-  tabText: { color: '#7f8997', fontSize: 8, fontWeight: '900', letterSpacing: 0.65 },
+  tabText: { color: '#7f8997', fontSize: 7, fontWeight: '900', letterSpacing: 0.45 },
   tabTextActive: { color: '#f3f4f6' },
   loadingBox: { padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
