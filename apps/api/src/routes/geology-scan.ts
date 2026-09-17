@@ -142,7 +142,12 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             estimated_depth_from_m,
             estimated_depth_to_m,
             estimated_quality,
-            confidence
+            estimated_quality_min,
+            estimated_quality_max,
+            estimated_density_min,
+            estimated_density_max,
+            confidence,
+            updated_at
           )
           SELECT
             $6,
@@ -152,17 +157,28 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             quantity_remaining * (1 + $7),
             greatest(0, depth_from_m * (1 - $7)),
             least(depth_to_m, $4) * (1 + $7),
+            quality,
             greatest(0, quality * (1 - $7)),
-            $8
+            quality * (1 + $7),
+            greatest(0, density * (1 - $7)),
+            density * (1 + $7),
+            $8,
+            now()
           FROM visible
           ON CONFLICT (player_id, deposit_id) DO UPDATE SET
-            discovered_at = EXCLUDED.discovered_at,
             estimated_quantity_min = EXCLUDED.estimated_quantity_min,
             estimated_quantity_max = EXCLUDED.estimated_quantity_max,
             estimated_depth_from_m = EXCLUDED.estimated_depth_from_m,
             estimated_depth_to_m = EXCLUDED.estimated_depth_to_m,
             estimated_quality = EXCLUDED.estimated_quality,
-            confidence = EXCLUDED.confidence
+            estimated_quality_min = EXCLUDED.estimated_quality_min,
+            estimated_quality_max = EXCLUDED.estimated_quality_max,
+            estimated_density_min = EXCLUDED.estimated_density_min,
+            estimated_density_max = EXCLUDED.estimated_density_max,
+            confidence = EXCLUDED.confidence,
+            updated_at = now()
+          WHERE player_deposit_knowledge.confidence IS NULL
+             OR EXCLUDED.confidence > player_deposit_knowledge.confidence
         `,
         [
           targetLat,
