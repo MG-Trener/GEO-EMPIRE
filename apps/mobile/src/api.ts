@@ -2,6 +2,9 @@ import type {
   CollectExtractionResponse,
   ExtractionStatus,
   GeologyScanResponse,
+  GeologySkillKey,
+  GeologyUpgradeCatalog,
+  GeologyUpgradeResponse,
   InventoryItem,
   LocateResponse,
   PlayerSummary,
@@ -38,6 +41,28 @@ export async function locateWorld(lat: number, lng: number, ring = 2): Promise<L
 
 export async function getPlayerSummary(playerId = DEMO_PLAYER_ID): Promise<PlayerSummary> {
   return requestJson<PlayerSummary>(`${API_URL}/api/v1/players/${encodeURIComponent(playerId)}/summary`);
+}
+
+export async function getGeologyUpgrades(playerId = DEMO_PLAYER_ID): Promise<GeologyUpgradeCatalog> {
+  return requestJson<GeologyUpgradeCatalog>(
+    `${API_URL}/api/v1/players/${encodeURIComponent(playerId)}/geology-upgrades`,
+  );
+}
+
+export async function upgradeGeology(input: {
+  skill: GeologySkillKey;
+  currency?: 'soft' | 'premium';
+  playerId?: string;
+}): Promise<GeologyUpgradeResponse> {
+  const playerId = input.playerId ?? DEMO_PLAYER_ID;
+  return requestJson<GeologyUpgradeResponse>(
+    `${API_URL}/api/v1/players/${encodeURIComponent(playerId)}/geology-upgrades`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ skill: input.skill, currency: input.currency ?? 'soft' }),
+    },
+  );
 }
 
 export async function runGeologyScan(input: {
