@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "GEO EMPIRE",
+    "slug": "geo-empire",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "plugins": [
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GEO EMPIRE использует геолокацию для исследования территории и взаимодействия с игровым миром."
+        }
+      ]
+    ],
+    "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "ios": {
+      "supportsTablet": true
+    }
+  }
+}
