@@ -50,6 +50,15 @@ type OperationRow = {
   resource_code: string;
   resource_name: string;
   unit: string;
+  development_project_id?: string | null;
+  opex_per_unit?: string | null;
+};
+
+type DevelopmentProjectRow = {
+  id: string;
+  status: string;
+  planned_daily_output: string;
+  opex_per_unit: string;
 };
 
 function round4(value: number): number {
@@ -65,7 +74,7 @@ function allowedResource(buildingCode: string, resourceCode: string): boolean {
   return false;
 }
 
-function calculateRate(buildingCode: string, level: number, density: number, quality: number): number {
+function calculateLegacyRate(buildingCode: string, level: number, density: number, quality: number): number {
   const baseRate = buildingCode === 'OIL_WELL' ? 80 : buildingCode === 'GAS_WELL' ? 2_000 : 20;
   const levelMultiplier = 1 + Math.max(0, level - 1) * 0.25;
   return round4(Math.max(0.01, baseRate * density * (quality / 100) * levelMultiplier));
@@ -76,6 +85,11 @@ function accruedAmount(operation: OperationRow, now = new Date()): number {
   const elapsedMs = Math.max(0, now.getTime() - new Date(operation.last_collected_at).getTime());
   const elapsedHours = Math.min(elapsedMs / 3_600_000, Number(operation.max_buffer_hours));
   return round4(Math.min(Number(operation.quantity_remaining), Number(operation.rate_per_hour) * elapsedHours));
+}
+
+function operatingCost(amount: number, opexPerUnit: number): number {
+  if (amount <= 0 || opexPerUnit <= 0) return 0;
+  return Math.max(1, Math.ceil(amount * opexPerUnit));
 }
 
 export async function extractionRoutes(app: FastifyInstance): Promise<void> {
@@ -192,12 +206,30 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(403).send({ error: 'deposit_not_discovered' });
       }
 
-      const ratePerHour = calculateRate(
-        building.building_code,
-        Number(building.level),
-        Number(deposit.density),
-        Number(deposit.quality),
+      const projectResult = await client.query<DevelopmentProjectRow>(
+        `
+          SELECT id::text, status, planned_daily_output::text, opex_per_unit::text
+          FROM development_projects
+          WHERE player_id = $1 AND deposit_id = $2 AND building_id = $3
+          FOR UPDATE
+        `,
+        [playerId, depositId, buildingId],
       );
+      const project = projectResult.rows[0] ?? null;
+
+      if (project && !['constructing', 'operating'].includes(project.status)) {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({ error: 'development_project_not_ready_for_operation', status: project.status });
+      }
+
+      const ratePerHour = project
+        ? round4(Math.max(0.01, Number(project.planned_daily_output) / 24))
+        : calculateLegacyRate(
+            building.building_code,
+            Number(building.level),
+            Number(deposit.density),
+            Number(deposit.quality),
+          );
 
       await client.query(
         `
@@ -206,6 +238,13 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
         `,
         [buildingId, depositId, ratePerHour],
       );
+
+      if (project) {
+        await client.query(
+          `UPDATE development_projects SET status = 'operating', updated_at = now() WHERE id = $1`,
+          [project.id],
+        );
+      }
 
       await client.query('COMMIT');
       return {
@@ -217,7 +256,19 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
           quantityRemaining: Number(deposit.quantity_remaining),
         },
         ratePerHour,
+        plannedDailyOutput: round4(ratePerHour * 24),
         maxBufferHours: 48,
+        economics: project
+          ? {
+              source: 'development_project',
+              projectId: project.id,
+              opexPerUnit: Number(project.opex_per_unit),
+            }
+          : {
+              source: 'legacy',
+              projectId: null,
+              opexPerUnit: 0,
+            },
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -250,11 +301,14 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
           r.code AS resource_code,
           r.name_ru AS resource_name,
           r.unit,
-          b.owner_player_id::text
+          b.owner_player_id::text,
+          dp.id::text AS development_project_id,
+          dp.opex_per_unit::text
         FROM extraction_operations o
         JOIN buildings b ON b.id = o.building_id
         JOIN resource_deposits d ON d.id = o.deposit_id
         JOIN resources r ON r.id = d.resource_id
+        LEFT JOIN development_projects dp ON dp.building_id = o.building_id
         WHERE o.building_id = $1
       `,
       [params.data.buildingId],
@@ -266,13 +320,22 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: 'building_not_owned' });
     }
 
+    const available = accruedAmount(operation);
+    const opexPerUnit = Number(operation.opex_per_unit ?? 0);
     return {
       buildingId: operation.building_id,
       status: operation.status,
       ratePerHour: Number(operation.rate_per_hour),
+      plannedDailyOutput: round4(Number(operation.rate_per_hour) * 24),
       maxBufferHours: Number(operation.max_buffer_hours),
-      availableToCollect: accruedAmount(operation),
+      availableToCollect: available,
       lastCollectedAt: operation.last_collected_at,
+      economics: {
+        source: operation.development_project_id ? 'development_project' : 'legacy',
+        projectId: operation.development_project_id ?? null,
+        opexPerUnit,
+        operatingCostDue: operatingCost(available, opexPerUnit),
+      },
       deposit: {
         id: operation.deposit_id,
         resource: { code: operation.resource_code, name: operation.resource_name, unit: operation.unit },
@@ -308,11 +371,14 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
             d.resource_id,
             r.code AS resource_code,
             r.name_ru AS resource_name,
-            r.unit
+            r.unit,
+            dp.id::text AS development_project_id,
+            dp.opex_per_unit::text
           FROM extraction_operations o
           JOIN buildings b ON b.id = o.building_id
           JOIN resource_deposits d ON d.id = o.deposit_id
           JOIN resources r ON r.id = d.resource_id
+          LEFT JOIN development_projects dp ON dp.building_id = o.building_id
           WHERE o.building_id = $1
           FOR UPDATE OF o, d
         `,
@@ -333,6 +399,35 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
       if (amount <= 0) {
         await client.query('ROLLBACK');
         return reply.code(409).send({ error: operation.status === 'depleted' ? 'deposit_depleted' : 'nothing_to_collect' });
+      }
+
+      const opexPerUnit = Number(operation.opex_per_unit ?? 0);
+      const cost = operatingCost(amount, opexPerUnit);
+      let walletAfter: number | null = null;
+
+      if (cost > 0) {
+        const walletResult = await client.query<{ soft_currency: string }>(
+          `SELECT soft_currency::text FROM wallets WHERE player_id = $1 FOR UPDATE`,
+          [playerId],
+        );
+        const wallet = walletResult.rows[0];
+        if (!wallet) {
+          await client.query('ROLLBACK');
+          return reply.code(404).send({ error: 'wallet_not_found' });
+        }
+
+        const balance = Number(wallet.soft_currency);
+        if (balance < cost) {
+          await client.query('ROLLBACK');
+          return reply.code(402).send({
+            error: 'insufficient_operating_funds',
+            required: cost,
+            balance,
+            availableToCollect: amount,
+            opexPerUnit,
+          });
+        }
+        walletAfter = balance - cost;
       }
 
       const remainingAfter = round4(Math.max(0, Number(operation.quantity_remaining) - amount));
@@ -360,6 +455,23 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
         `,
         [playerId, operation.resource_id, amount, buildingId],
       );
+
+      if (cost > 0) {
+        await client.query(
+          `UPDATE wallets SET soft_currency = soft_currency - $2, updated_at = now() WHERE player_id = $1`,
+          [playerId, cost],
+        );
+        await client.query(
+          `
+            INSERT INTO wallet_transactions (
+              player_id, soft_delta, premium_delta, reason, reference_type, reference_id
+            )
+            VALUES ($1, $2, 0, 'extraction_opex', 'building', $3)
+          `,
+          [playerId, -cost, buildingId],
+        );
+      }
+
       await client.query(
         `
           UPDATE extraction_operations
@@ -382,6 +494,12 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
         resource: { code: operation.resource_code, name: operation.resource_name, unit: operation.unit },
         inventoryQuantity: Number(inventoryResult.rows[0]?.quantity ?? 0),
         depositQuantityRemaining: remainingAfter,
+        economics: {
+          projectId: operation.development_project_id ?? null,
+          opexPerUnit,
+          operatingCost: cost,
+          walletSoft: walletAfter,
+        },
       };
     } catch (error) {
       await client.query('ROLLBACK');

@@ -283,11 +283,19 @@ export default function App() {
     setAction('collect');
     try {
       const result = await collectExtraction({ playerId: DEMO_PLAYER_ID, buildingId });
-      setMessage(`Получено ${formatNumber(result.collected, 2)} ${result.resource.unit} · ${result.resource.name}`);
+      const operatingCost = result.economics?.operatingCost ?? 0;
+      setMessage(
+        operatingCost > 0
+          ? `Получено ${formatNumber(result.collected, 2)} ${result.resource.unit} · OPEX ${formatNumber(operatingCost)} ₡`
+          : `Получено ${formatNumber(result.collected, 2)} ${result.resource.unit} · ${result.resource.name}`,
+      );
       setExtraction(await getExtractionStatus(buildingId));
       await refreshInventory();
     } catch (error) {
-      setMessage(`Получение ресурсов: ${error instanceof Error ? error.message : 'ошибка'}`);
+      const reason = error instanceof Error ? error.message : 'ошибка';
+      setMessage(reason === 'insufficient_operating_funds'
+        ? 'Недостаточно средств для оплаты эксплуатационных расходов. Ресурс остаётся в буфере.'
+        : `Получение ресурсов: ${reason}`);
     } finally {
       setAction(null);
     }
@@ -528,6 +536,20 @@ function TerritoryPanel({
             </View>
             <Text style={styles.productionRate}>{formatNumber(extraction.ratePerHour, 2)} {extraction.deposit.resource.unit}/ч</Text>
           </View>
+          {extraction.economics?.source === 'development_project' ? (
+            <View style={styles.economicsBox}>
+              <Text style={styles.economicsTitle}>ЭКОНОМИКА ПРОЕКТА</Text>
+              <Text style={styles.economicsText}>
+                Мощность: {formatNumber(extraction.plannedDailyOutput ?? extraction.ratePerHour * 24, 1)} {extraction.deposit.resource.unit}/сут
+              </Text>
+              <Text style={styles.economicsText}>
+                OPEX: {formatNumber(extraction.economics.opexPerUnit, 2)} ₡/{extraction.deposit.resource.unit}
+              </Text>
+              <Text style={styles.operatingCost}>
+                К оплате при сборе: {formatNumber(extraction.economics.operatingCostDue ?? 0)} ₡
+              </Text>
+            </View>
+          ) : null}
           <Text style={styles.infoText}>Накоплено: {formatNumber(extraction.availableToCollect, 2)} {extraction.deposit.resource.unit}</Text>
           <Text style={styles.infoText}>Остаток месторождения: {formatNumber(extraction.deposit.quantityRemaining, 2)} {extraction.deposit.resource.unit}</Text>
           <ActionButton
@@ -719,6 +741,10 @@ const styles = StyleSheet.create({
   inlineLoading: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
   productionCard: { marginTop: 10, padding: 10, borderRadius: 11, backgroundColor: 'rgba(245,196,81,0.08)', borderWidth: 1, borderColor: 'rgba(245,196,81,0.25)' },
   productionRate: { color: '#f5c451', fontSize: 10, fontWeight: '900' },
+  economicsBox: { marginTop: 8, padding: 8, borderRadius: 9, backgroundColor: 'rgba(121,199,255,0.07)', borderWidth: 1, borderColor: 'rgba(121,199,255,0.16)' },
+  economicsTitle: { color: '#79c7ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  economicsText: { color: '#aebdca', fontSize: 9, marginTop: 3 },
+  operatingCost: { color: '#f5c451', fontSize: 9, fontWeight: '900', marginTop: 4 },
   scanResults: { marginTop: 11 },
   scanId: { color: '#687586', fontSize: 8, marginBottom: 4 },
   statsRow: { flexDirection: 'row', gap: 7, marginBottom: 8 },
