@@ -4,6 +4,7 @@ import { buildingRoutes } from './routes/buildings.js';
 import { extractionRoutes } from './routes/extraction.js';
 import { geologyRoutes } from './routes/geology.js';
 import { geologyScanRoutes } from './routes/geology-scan.js';
+import { geologyInvestigationRoutes } from './routes/geology-investigations.js';
 import { marketRoutes } from './routes/market.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { playerRoutes } from './routes/players.js';
@@ -26,6 +27,7 @@ const requiredTables = [
   'player_inventory',
   'inventory_transactions',
   'extraction_operations',
+  'geology_investigations',
 ] as const;
 
 const requiredExtensions = ['postgis', 'h3'] as const;
@@ -100,6 +102,7 @@ app.get('/api/v1/world/status', async () => {
 await app.register(worldRoutes, { prefix: '/api/v1/world' });
 await app.register(geologyRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyScanRoutes, { prefix: '/api/v1/geology' });
+await app.register(geologyInvestigationRoutes, { prefix: '/api/v1/geology' });
 await app.register(territoryRoutes, { prefix: '/api/v1/territories' });
 await app.register(buildingRoutes, { prefix: '/api/v1/buildings' });
 await app.register(extractionRoutes, { prefix: '/api/v1/extraction' });
