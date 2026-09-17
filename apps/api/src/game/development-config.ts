@@ -46,6 +46,7 @@ type MethodConfig = {
   recoveryRate: number;
   productionHorizonDays: number;
   maxDailyByUnit: Record<string, number>;
+  constructionSeconds: number;
 };
 
 const METHOD_CONFIG: Record<DevelopmentMethod, MethodConfig> = {
@@ -62,6 +63,7 @@ const METHOD_CONFIG: Record<DevelopmentMethod, MethodConfig> = {
     recoveryRate: 0.90,
     productionHorizonDays: 365,
     maxDailyByUnit: { t: 6000, kg: 1500, unit: 6000 },
+    constructionSeconds: 120,
   },
   underground_mine: {
     method: 'underground_mine',
@@ -76,6 +78,7 @@ const METHOD_CONFIG: Record<DevelopmentMethod, MethodConfig> = {
     recoveryRate: 0.82,
     productionHorizonDays: 540,
     maxDailyByUnit: { t: 2500, kg: 650, unit: 2500 },
+    constructionSeconds: 180,
   },
   oil_well: {
     method: 'oil_well',
@@ -90,6 +93,7 @@ const METHOD_CONFIG: Record<DevelopmentMethod, MethodConfig> = {
     recoveryRate: 0.55,
     productionHorizonDays: 600,
     maxDailyByUnit: { bbl: 4000, unit: 4000 },
+    constructionSeconds: 150,
   },
   gas_well: {
     method: 'gas_well',
@@ -104,6 +108,7 @@ const METHOD_CONFIG: Record<DevelopmentMethod, MethodConfig> = {
     recoveryRate: 0.65,
     productionHorizonDays: 600,
     maxDailyByUnit: { m3: 100_000, unit: 100_000 },
+    constructionSeconds: 150,
   },
 };
 
@@ -128,6 +133,10 @@ function riskPenalty(confidence: number): number {
   if (confidence >= 0.8) return 0.92;
   if (confidence >= 0.55) return 0.78;
   return 0.62;
+}
+
+export function getDevelopmentConstructionSeconds(method: DevelopmentMethod): number {
+  return METHOD_CONFIG[method].constructionSeconds;
 }
 
 export function buildDevelopmentOptions(input: BuildInput): DevelopmentOption[] {

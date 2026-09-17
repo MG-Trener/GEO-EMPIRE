@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { DEMO_PLAYER_ID, getApiUrl } from './api';
 
@@ -38,6 +38,21 @@ type SelectedProject = {
   geologyConfidence: number;
   geologySnapshotAt: string;
   outdated: boolean;
+  building: null | {
+    id: string;
+    status: string | null;
+    completesAt: string | null;
+    constructionComplete: boolean;
+  };
+};
+
+type ApprovalState = {
+  confidenceReady: boolean;
+  territoryOwned: boolean;
+  walletSoft: number;
+  sufficientFunds: boolean;
+  projectFresh: boolean;
+  canApprove: boolean;
 };
 
 type DevelopmentResponse = {
@@ -48,8 +63,24 @@ type DevelopmentResponse = {
     estimates: { confidence: number };
   };
   approvalRule: { minimumGeologyConfidence: number; message: string };
+  approvalState: ApprovalState;
   options: DevelopmentOption[];
   selectedProject: SelectedProject | null;
+};
+
+type ApprovalResponse = {
+  status: 'constructing';
+  projectId: string;
+  charged: number;
+  wallet: { soft: number };
+  building: {
+    id: string;
+    code: string;
+    name: string;
+    h3Index: string;
+    completesAt: string;
+    constructionSeconds: number;
+  };
 };
 
 function formatNumber(value: number, digits = 0): string {
@@ -63,6 +94,13 @@ function formatMoney(value: number): string {
   if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)} млн ₡`;
   if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(0)} тыс. ₡`;
   return `${sign}${formatNumber(abs)} ₡`;
+}
+
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return 'завершено';
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes} мин ${rest} сек` : `${rest} сек`;
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -85,6 +123,8 @@ export function DevelopmentProjectPanel({
   const [data, setData] = useState<DevelopmentResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<DevelopmentMethod | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [now, setNow] = useState(Date.now());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -104,6 +144,28 @@ export function DevelopmentProjectPanel({
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const completesAt = data?.selectedProject?.building?.completesAt;
+    if (!completesAt) return undefined;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      if (new Date(completesAt).getTime() <= Date.now()) void refresh();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [data?.selectedProject?.building?.completesAt, refresh]);
+
+  const constructionRemaining = useMemo(() => {
+    const completesAt = data?.selectedProject?.building?.completesAt;
+    if (!completesAt) return 0;
+    return Math.max(0, Math.ceil((new Date(completesAt).getTime() - now) / 1000));
+  }, [data?.selectedProject?.building?.completesAt, now]);
+
+  useEffect(() => {
+    if (!data?.selectedProject?.building?.completesAt || constructionRemaining <= 0) return undefined;
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, [constructionRemaining, data?.selectedProject?.building?.completesAt]);
+
   const saveProject = useCallback(async (method: DevelopmentMethod) => {
     setSaving(method);
     try {
@@ -112,7 +174,7 @@ export function DevelopmentProjectPanel({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ playerId: DEMO_PLAYER_ID, depositId, method }),
       });
-      onMessage?.('Проект разработки сохранён. Капитальные затраты пока не списываются.');
+      onMessage?.('Проект разработки сохранён. CAPEX пока не списан.');
       await refresh();
     } catch (error) {
       onMessage?.(`Выбор проекта: ${error instanceof Error ? error.message : 'ошибка'}`);
@@ -120,6 +182,29 @@ export function DevelopmentProjectPanel({
       setSaving(null);
     }
   }, [depositId, onMessage, refresh]);
+
+  const approveProject = useCallback(async () => {
+    const project = data?.selectedProject;
+    if (!project) return;
+    setApproving(true);
+    try {
+      const result = await requestJson<ApprovalResponse>(
+        `${getApiUrl()}/api/v1/development/projects/${encodeURIComponent(project.id)}/approve`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ playerId: DEMO_PLAYER_ID }),
+        },
+      );
+      onMessage?.(`Проект утверждён · списано ${formatMoney(result.charged)} · строительство запущено`);
+      await refresh();
+    } catch (error) {
+      onMessage?.(`Утверждение проекта: ${error instanceof Error ? error.message : 'ошибка'}`);
+      await refresh();
+    } finally {
+      setApproving(false);
+    }
+  }, [data?.selectedProject, onMessage, refresh]);
 
   if (loading && !data) {
     return (
@@ -131,6 +216,8 @@ export function DevelopmentProjectPanel({
   }
 
   if (!data) return null;
+
+  const projectLocked = Boolean(data.selectedProject && data.selectedProject.status !== 'planned');
 
   return (
     <View style={styles.root}>
@@ -147,10 +234,30 @@ export function DevelopmentProjectPanel({
 
       {data.selectedProject ? (
         <View style={[styles.selectedBox, data.selectedProject.outdated && styles.selectedOutdated]}>
-          <Text style={styles.selectedLabel}>{data.selectedProject.outdated ? 'ПРОЕКТ ТРЕБУЕТ ПЕРЕСЧЁТА' : 'ВЫБРАННЫЙ ПРОЕКТ'}</Text>
+          <Text style={styles.selectedLabel}>
+            {data.selectedProject.status === 'constructing'
+              ? 'ПРОЕКТ УТВЕРЖДЁН'
+              : data.selectedProject.outdated
+                ? 'ПРОЕКТ ТРЕБУЕТ ПЕРЕСЧЁТА'
+                : 'ВЫБРАННЫЙ ПРОЕКТ'}
+          </Text>
           <Text style={styles.selectedText}>
             {data.options.find((item) => item.method === data.selectedProject?.method)?.name ?? data.selectedProject.method}
             {' · '}{formatMoney(data.selectedProject.capex)}
+          </Text>
+        </View>
+      ) : null}
+
+      {data.selectedProject?.status === 'constructing' && data.selectedProject.building ? (
+        <View style={styles.constructionBox}>
+          <Text style={styles.constructionLabel}>СТРОИТЕЛЬСТВО</Text>
+          <Text style={styles.constructionTitle}>
+            {constructionRemaining > 0 ? `До завершения: ${formatCountdown(constructionRemaining)}` : 'Объект построен'}
+          </Text>
+          <Text style={styles.description}>
+            {constructionRemaining > 0
+              ? 'CAPEX уже списан. После завершения объект будет готов к настройке добычи.'
+              : 'Строительство завершено. Откройте объект на карте и запустите добычу найденного ресурса.'}
           </Text>
         </View>
       ) : null}
@@ -184,28 +291,68 @@ export function DevelopmentProjectPanel({
             </View>
 
             {!option.approvalReady ? (
-              <Text style={styles.warning}>Для будущего утверждения CAPEX нужно повысить достоверность геологии до 85%.</Text>
+              <Text style={styles.warning}>Для утверждения CAPEX нужно повысить достоверность геологии до 85%.</Text>
             ) : null}
 
-            <Pressable
-              disabled={saving !== null || sameAndFresh}
-              onPress={() => void saveProject(option.method)}
-              style={({ pressed }) => [
-                styles.button,
-                sameAndFresh && styles.buttonSelected,
-                saving !== null && styles.buttonDisabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {saving === option.method
-                ? <ActivityIndicator color="#101317" />
-                : <Text style={styles.buttonText}>{sameAndFresh ? 'ПРОЕКТ ВЫБРАН' : selected ? 'ПЕРЕСЧИТАТЬ ПРОЕКТ' : 'ВЫБРАТЬ ПРОЕКТ'}</Text>}
-            </Pressable>
+            {!projectLocked ? (
+              <Pressable
+                disabled={saving !== null || sameAndFresh}
+                onPress={() => void saveProject(option.method)}
+                style={({ pressed }) => [
+                  styles.button,
+                  sameAndFresh && styles.buttonSelected,
+                  saving !== null && styles.buttonDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {saving === option.method
+                  ? <ActivityIndicator color="#101317" />
+                  : <Text style={styles.buttonText}>{sameAndFresh ? 'ПРОЕКТ ВЫБРАН' : selected ? 'ПЕРЕСЧИТАТЬ ПРОЕКТ' : 'ВЫБРАТЬ ПРОЕКТ'}</Text>}
+              </Pressable>
+            ) : null}
           </View>
         );
       })}
 
-      <Text style={styles.note}>{data.approvalRule.message} На этом этапе выбор проекта не списывает деньги.</Text>
+      {data.selectedProject?.status === 'planned' ? (
+        <View style={styles.approvalBox}>
+          <Text style={styles.approvalTitle}>ГОТОВНОСТЬ К ИНВЕСТИЦИИ</Text>
+          <CheckRow ok={data.approvalState.confidenceReady} label={`Геология ≥ ${Math.round(data.approvalRule.minimumGeologyConfidence * 100)}%`} />
+          <CheckRow ok={data.approvalState.territoryOwned} label="Участок принадлежит компании" />
+          <CheckRow ok={data.approvalState.projectFresh} label="Расчёт проекта актуален" />
+          <CheckRow
+            ok={data.approvalState.sufficientFunds}
+            label={`Средства: ${formatMoney(data.approvalState.walletSoft)} / CAPEX ${formatMoney(data.selectedProject.capex)}`}
+          />
+
+          <Pressable
+            disabled={!data.approvalState.canApprove || approving}
+            onPress={() => void approveProject()}
+            style={({ pressed }) => [
+              styles.approveButton,
+              (!data.approvalState.canApprove || approving) && styles.buttonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            {approving
+              ? <ActivityIndicator color="#101317" />
+              : <Text style={styles.approveButtonText}>УТВЕРДИТЬ И СТРОИТЬ · {formatMoney(data.selectedProject.capex)}</Text>}
+          </Pressable>
+        </View>
+      ) : null}
+
+      <Text style={styles.note}>
+        Выбор проекта бесплатный. CAPEX списывается только при утверждении и запуске строительства.
+      </Text>
+    </View>
+  );
+}
+
+function CheckRow({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <View style={styles.checkRow}>
+      <Text style={[styles.checkMark, ok ? styles.checkOk : styles.checkFail]}>{ok ? '✓' : '×'}</Text>
+      <Text style={styles.checkText}>{label}</Text>
     </View>
   );
 }
@@ -234,6 +381,9 @@ const styles = StyleSheet.create({
   selectedOutdated: { backgroundColor: 'rgba(214,155,55,0.08)', borderColor: 'rgba(214,155,55,0.28)' },
   selectedLabel: { color: '#82bca7', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
   selectedText: { color: '#dce4e7', fontSize: 10, fontWeight: '800', marginTop: 3 },
+  constructionBox: { padding: 10, borderRadius: 11, backgroundColor: 'rgba(121,199,255,0.08)', borderWidth: 1, borderColor: 'rgba(121,199,255,0.22)' },
+  constructionLabel: { color: '#79c7ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  constructionTitle: { color: '#d5f0ff', fontSize: 13, fontWeight: '900', marginTop: 3 },
   optionCard: { padding: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
   optionRecommended: { borderColor: 'rgba(245,196,81,0.32)', backgroundColor: 'rgba(245,196,81,0.055)' },
   optionTitle: { color: '#f1f3f4', fontSize: 12, fontWeight: '900' },
@@ -247,8 +397,17 @@ const styles = StyleSheet.create({
   warning: { color: '#d99b62', fontSize: 8, lineHeight: 11, marginTop: 7 },
   button: { minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: '#f5c451', marginTop: 8 },
   buttonSelected: { backgroundColor: '#5c7d70' },
-  buttonDisabled: { opacity: 0.55 },
+  buttonDisabled: { opacity: 0.42 },
   buttonText: { color: '#101317', fontSize: 8, fontWeight: '900', letterSpacing: 0.6 },
+  approvalBox: { padding: 10, borderRadius: 11, backgroundColor: 'rgba(245,196,81,0.055)', borderWidth: 1, borderColor: 'rgba(245,196,81,0.18)' },
+  approvalTitle: { color: '#f5c451', fontSize: 8, fontWeight: '900', letterSpacing: 0.8, marginBottom: 5 },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 4 },
+  checkMark: { width: 16, fontSize: 12, fontWeight: '900', textAlign: 'center' },
+  checkOk: { color: '#77d9bd' },
+  checkFail: { color: '#db806e' },
+  checkText: { flex: 1, color: '#aeb8c0', fontSize: 8, lineHeight: 11 },
+  approveButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: '#d69b37', marginTop: 9 },
+  approveButtonText: { color: '#101317', fontSize: 8, fontWeight: '900', letterSpacing: 0.45 },
   note: { color: '#67747f', fontSize: 7, lineHeight: 10 },
   pressed: { opacity: 0.82 },
 });
