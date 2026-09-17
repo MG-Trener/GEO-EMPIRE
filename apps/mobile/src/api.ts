@@ -7,6 +7,8 @@ import type {
   GeologyUpgradeResponse,
   InventoryItem,
   LocateResponse,
+  MarketCatalog,
+  MarketSaleResponse,
   PlayerSummary,
   StartExtractionResponse,
 } from './types';
@@ -63,6 +65,26 @@ export async function upgradeGeology(input: {
       body: JSON.stringify({ skill: input.skill, currency: input.currency ?? 'soft' }),
     },
   );
+}
+
+export async function getMarket(playerId = DEMO_PLAYER_ID): Promise<MarketCatalog> {
+  return requestJson<MarketCatalog>(`${API_URL}/api/v1/market/${encodeURIComponent(playerId)}`);
+}
+
+export async function sellResource(input: {
+  resourceId: number;
+  quantity: number;
+  playerId?: string;
+}): Promise<MarketSaleResponse> {
+  return requestJson<MarketSaleResponse>(`${API_URL}/api/v1/market/sell`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      playerId: input.playerId ?? DEMO_PLAYER_ID,
+      resourceId: input.resourceId,
+      quantity: input.quantity,
+    }),
+  });
 }
 
 export async function runGeologyScan(input: {
