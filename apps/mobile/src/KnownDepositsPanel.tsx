@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { DEMO_PLAYER_ID, getApiUrl } from './api';
 import { DepositInvestigationPanel } from './DepositInvestigationPanel';
+import { DevelopmentProjectPanel } from './DevelopmentProjectPanel';
 
 type InvestmentRisk = 'low' | 'moderate' | 'elevated' | 'high';
 
@@ -149,12 +150,18 @@ export function KnownDepositsPanel({ onMessage }: { onMessage?: (message: string
       <InvestmentCard deposit={selected} />
 
       <DepositInvestigationPanel
-        key={selected.id}
+        key={`study-${selected.id}`}
         depositId={selected.id}
         onMessage={(message) => {
           onMessage?.(message);
           void refresh();
         }}
+      />
+
+      <DevelopmentProjectPanel
+        key={`development-${selected.id}-${selected.updatedAt}`}
+        depositId={selected.id}
+        onMessage={onMessage}
       />
     </View>
   );
