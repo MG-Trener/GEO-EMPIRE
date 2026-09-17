@@ -221,6 +221,7 @@ export type MarketOffer = {
 export type MarketCatalog = {
   playerId: string;
   wallet: { soft: number; premium: number };
+  debt: { outstanding: number; saleRepaymentShare: number };
   offers: MarketOffer[];
 };
 
@@ -230,8 +231,49 @@ export type MarketSaleResponse = {
   quantity: number;
   pricePerUnit: number;
   proceeds: number;
+  grossProceeds: number;
+  debtRepayment: number;
+  netProceeds: number;
+  repayments: Array<{ loanId: string; amount: number; outstanding: number; status: string }>;
   inventoryQuantity: number;
   wallet: { soft: number; premium: number };
+};
+
+export type ProjectFinancingOffer = {
+  eligible: boolean;
+  reason: string | null;
+  capex: number;
+  recommendedWorkingCapital: number;
+  fundingTarget: number;
+  walletSoft: number;
+  equityAvailable: number;
+  coverageRatio: number;
+  maxLoan: number;
+  recommendedLoan: number;
+  annualInterestRate: number;
+  repaymentShare: number;
+};
+
+export type ProjectLoan = {
+  id: string;
+  projectId: string;
+  principal: number;
+  totalDue: number;
+  outstanding: number;
+  repaid: number;
+  annualInterestRate: number;
+  repaymentShare: number;
+  status: string;
+  issuedAt: string;
+  repaidAt: string | null;
+  updatedAt: string;
+};
+
+export type ProjectFinancingOfferResponse = {
+  playerId: string;
+  projectId: string;
+  offer: ProjectFinancingOffer;
+  existingLoan: ProjectLoan | null;
 };
 
 export type StorePack = {
