@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      NODE_ENV: production
       EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || 'https://geo-empire-api-public-production.up.railway.app' }}
       EXPO_PUBLIC_DEMO_PLAYER_ID: ${{ github.event.inputs.demo_player_id || '11111111-1111-4111-8111-111111111111' }}
 
@@ -47,10 +46,10 @@ jobs:
           packages: platform-tools
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --include=dev
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Typecheck mobile
+        run: npm --workspace @geo-empire/mobile run typecheck
 
       - name: Generate Android project
         working-directory: apps/mobile
@@ -58,6 +57,8 @@ jobs:
 
       - name: Build standalone release APK
         working-directory: apps/mobile/android
+        env:
+          NODE_ENV: production
         run: ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK
