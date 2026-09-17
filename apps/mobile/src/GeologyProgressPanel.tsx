@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getGeologyUpgrades, upgradeGeology } from './api';
 import { MarketPanel } from './MarketPanel';
+import { StorePanel } from './StorePanel';
 import type { GeologySkillKey, GeologyUpgradeCatalog, GeologyUpgradeOption } from './types';
 
 type Props = {
@@ -25,7 +26,7 @@ function formatValue(option: GeologyUpgradeOption, value: number | null): string
 }
 
 export function GeologyProgressPanel({ onMessage }: Props) {
-  const [section, setSection] = useState<'geology' | 'market'>('geology');
+  const [section, setSection] = useState<'geology' | 'market' | 'store'>('geology');
   const [catalog, setCatalog] = useState<GeologyUpgradeCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<GeologySkillKey | null>(null);
@@ -75,12 +76,23 @@ export function GeologyProgressPanel({ onMessage }: Props) {
         >
           <Text style={[styles.tabText, section === 'market' && styles.tabTextActive]}>РЫНОК</Text>
         </Pressable>
+        <Pressable
+          onPress={() => setSection('store')}
+          style={[styles.tab, section === 'store' && styles.tabStoreActive]}
+        >
+          <Text style={[styles.tabText, section === 'store' && styles.tabTextActive]}>МАГАЗИН</Text>
+        </Pressable>
       </View>
 
       {section === 'market' ? (
         <MarketPanel
           onMessage={onMessage}
           onSold={refresh}
+        />
+      ) : section === 'store' ? (
+        <StorePanel
+          onMessage={onMessage}
+          onPurchased={refresh}
         />
       ) : loading && !catalog ? (
         <View style={styles.loadingBox}>
@@ -185,11 +197,12 @@ function UpgradeButton({
 
 const styles = StyleSheet.create({
   panel: { marginTop: 14, gap: 9 },
-  tabs: { flexDirection: 'row', gap: 8, padding: 3, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
+  tabs: { flexDirection: 'row', gap: 6, padding: 3, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
   tab: { flex: 1, minHeight: 34, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   tabActive: { backgroundColor: 'rgba(245,196,81,0.16)' },
   tabMarketActive: { backgroundColor: 'rgba(119,217,189,0.14)' },
-  tabText: { color: '#7f8997', fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+  tabStoreActive: { backgroundColor: 'rgba(184,138,221,0.16)' },
+  tabText: { color: '#7f8997', fontSize: 8, fontWeight: '900', letterSpacing: 0.65 },
   tabTextActive: { color: '#f3f4f6' },
   loadingBox: { padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
