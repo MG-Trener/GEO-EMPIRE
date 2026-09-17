@@ -36,8 +36,10 @@ import type {
 
 const ASTANA_DEMO = { lat: 51.1694, lng: 71.4491 };
 const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const WORLD_RING = 6;
+const MAP_ZOOM = 18.15;
 
-function cellsToGeoJson(cells: WorldCell[]): FeatureCollection<Polygon> {
+function cellsToGeoJson(cells: WorldCell[], selectedH3?: string): FeatureCollection<Polygon> {
   return {
     type: 'FeatureCollection',
     features: cells.map((cell) => {
@@ -51,6 +53,7 @@ function cellsToGeoJson(cells: WorldCell[]): FeatureCollection<Polygon> {
           h3Index: cell.h3Index,
           occupied: cell.occupied ? 1 : 0,
           current: cell.distance === 0 ? 1 : 0,
+          selected: cell.h3Index === selectedH3 ? 1 : 0,
         },
         geometry: { type: 'Polygon', coordinates: [ring] },
       };
@@ -74,6 +77,7 @@ export default function App() {
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [showGeology, setShowGeology] = useState(false);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
   const [action, setAction] = useState<'claim' | 'build' | 'extract' | 'collect' | null>(null);
   const [message, setMessage] = useState('Подготовка карты…');
 
@@ -91,7 +95,7 @@ export default function App() {
   ) => {
     setLoadingWorld(true);
     try {
-      const response = await locateWorld(next.lat, next.lng, 2);
+      const response = await locateWorld(next.lat, next.lng, WORLD_RING);
       setWorld(response);
       setSelectedCell(
         keepSelectedH3
@@ -99,7 +103,7 @@ export default function App() {
           : response.currentCell,
       );
       setScan(null);
-      setMessage(`H3 r12 · ${response.cells.length} ячеек загружено`);
+      setMessage(`H3 r12 · ${response.cells.length} локальных ячеек`);
       await refreshInventory();
     } catch (error) {
       setMessage(`API недоступен: ${error instanceof Error ? error.message : 'ошибка'}`);
@@ -124,7 +128,7 @@ export default function App() {
             return;
           }
         } catch {
-          // Use deterministic development coordinates below.
+          // Development fallback below.
         }
       }
 
@@ -168,7 +172,10 @@ export default function App() {
     return () => { cancelled = true; };
   }, [selectedCell]);
 
-  const cellsGeoJson = useMemo(() => cellsToGeoJson(world?.cells ?? []), [world]);
+  const cellsGeoJson = useMemo(
+    () => cellsToGeoJson(world?.cells ?? [], selectedCell?.h3Index),
+    [selectedCell?.h3Index, world],
+  );
   const playerGeoJson = useMemo(() => ({
     type: 'FeatureCollection' as const,
     features: [{
@@ -196,6 +203,7 @@ export default function App() {
         targetLng: selectedCell.center.lng,
       });
       setScan(result);
+      setSheetExpanded(true);
       setMessage(result.deposits.length
         ? `Разведка сохранена · обнаружено залежей: ${result.deposits.length}`
         : 'Разведка сохранена · доступных залежей не обнаружено');
@@ -290,9 +298,9 @@ export default function App() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       <Map style={styles.map} mapStyle={MAP_STYLE_URL}>
-        <Camera center={[position.lng, position.lat]} zoom={16.8} />
+        <Camera center={[position.lng, position.lat]} zoom={MAP_ZOOM} />
 
         <GeoJSONSource
           id="geo-empire-cells"
@@ -304,6 +312,7 @@ export default function App() {
               setSelectedCell(cell);
               setScan(null);
               setShowGeology(false);
+              setSheetExpanded(false);
             }
           }}
         >
@@ -311,20 +320,29 @@ export default function App() {
             id="cell-fill"
             type="fill"
             paint={{
-              'fill-color': ['case', ['==', ['get', 'current'], 1], '#f5a524', ['==', ['get', 'occupied'], 1], '#b83a3a', '#1c7b6e'],
-              'fill-opacity': 0.28,
+              'fill-color': [
+                'case',
+                ['==', ['get', 'current'], 1], '#dca936',
+                ['==', ['get', 'occupied'], 1], '#b74a4a',
+                '#16886d',
+              ],
+              'fill-opacity': ['case', ['==', ['get', 'selected'], 1], 0.42, 0.24],
             } as never}
           />
           <Layer
             id="cell-outline"
             type="line"
-            paint={{ 'line-color': '#f2d18b', 'line-width': 1.35, 'line-opacity': 0.78 } as never}
+            paint={{
+              'line-color': ['case', ['==', ['get', 'selected'], 1], '#ffe08a', '#8fd7bc'],
+              'line-width': ['case', ['==', ['get', 'selected'], 1], 2.8, 1.05],
+              'line-opacity': 0.9,
+            } as never}
           />
         </GeoJSONSource>
 
         <GeoJSONSource id="player-position" data={playerGeoJson}>
-          <Layer id="player-halo" type="circle" paint={{ 'circle-radius': 13, 'circle-color': '#0a0f16', 'circle-opacity': 0.34 } as never} />
-          <Layer id="player-dot" type="circle" paint={{ 'circle-radius': 7, 'circle-color': '#f5c451', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } as never} />
+          <Layer id="player-halo" type="circle" paint={{ 'circle-radius': 14, 'circle-color': '#0a0f16', 'circle-opacity': 0.46 } as never} />
+          <Layer id="player-dot" type="circle" paint={{ 'circle-radius': 6, 'circle-color': '#f5c451', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } as never} />
         </GeoJSONSource>
       </Map>
 
@@ -332,27 +350,47 @@ export default function App() {
         <View style={styles.topCard}>
           <View style={styles.flex}>
             <Text style={styles.brand}>GEO EMPIRE</Text>
-            <Text style={styles.status}>{message}</Text>
+            <Text style={styles.status} numberOfLines={2}>{message}</Text>
           </View>
           <Pressable
-            onPress={() => setShowGeology((value) => !value)}
-            style={({ pressed }) => [styles.geologyButton, showGeology && styles.geologyButtonActive, pressed && styles.pressed]}
+            onPress={() => {
+              setShowGeology((value) => !value);
+              setSheetExpanded(false);
+            }}
+            style={({ pressed }) => [
+              styles.geologyButton,
+              showGeology && styles.geologyButtonActive,
+              pressed && styles.pressed,
+            ]}
           >
             <Text style={styles.geologyButtonText}>{showGeology ? 'КАРТА' : 'ГЕОЛОГИЯ'}</Text>
           </Pressable>
-          {loadingWorld ? <ActivityIndicator /> : null}
+          {loadingWorld ? <ActivityIndicator size="small" /> : null}
         </View>
 
         <View style={styles.legend}>
           <Legend dotStyle={styles.freeDot} label="Свободно" />
           <Legend dotStyle={styles.busyDot} label="Занято" />
           <Legend dotStyle={styles.currentDot} label="Вы здесь" />
+          <Text style={styles.legendMeta}>r12 · локальная сетка</Text>
         </View>
 
         <View style={styles.spacer} />
 
-        <View style={[styles.bottomCard, showGeology && styles.bottomCardTall]}>
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <View style={[styles.bottomCard, sheetExpanded && styles.bottomCardExpanded]}>
+          <Pressable
+            onPress={() => setSheetExpanded((value) => !value)}
+            style={({ pressed }) => [styles.sheetHandleArea, pressed && styles.pressed]}
+          >
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetHint}>{sheetExpanded ? 'Свернуть' : 'Развернуть'}</Text>
+          </Pressable>
+
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
             {showGeology ? (
               <>
                 <GeologyProgressPanel onMessage={setMessage} />
@@ -602,57 +640,99 @@ const absolute = { position: 'absolute' as const, top: 0, right: 0, bottom: 0, l
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0a0f16' },
   map: { ...absolute },
-  overlay: { ...absolute, paddingHorizontal: 14, paddingTop: 8 },
+  overlay: { ...absolute, paddingHorizontal: 12, paddingTop: 5 },
   flex: { flex: 1 },
-  topCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 9, backgroundColor: 'rgba(10,15,22,0.92)', borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11 },
-  brand: { color: '#f5c451', fontWeight: '900', fontSize: 18, letterSpacing: 1.6 },
-  status: { color: '#c7ced8', fontSize: 11, marginTop: 3, maxWidth: 250 },
-  geologyButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 9, borderWidth: 1, borderColor: 'rgba(245,196,81,0.4)', backgroundColor: 'rgba(245,196,81,0.08)' },
+  topCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(8,13,20,0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(242,209,139,0.26)',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  brand: { color: '#f5c451', fontWeight: '900', fontSize: 18, letterSpacing: 1.5 },
+  status: { color: '#c7ced8', fontSize: 10, marginTop: 2, maxWidth: 235 },
+  geologyButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(245,196,81,0.4)',
+    backgroundColor: 'rgba(245,196,81,0.08)',
+  },
   geologyButtonActive: { backgroundColor: 'rgba(121,199,255,0.14)', borderColor: 'rgba(121,199,255,0.5)' },
   geologyButtonText: { color: '#f4e8c8', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
-  legend: { alignSelf: 'flex-start', flexDirection: 'row', gap: 10, marginTop: 8, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(10,15,22,0.88)' },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  freeDot: { backgroundColor: '#1c7b6e' },
-  busyDot: { backgroundColor: '#b83a3a' },
-  currentDot: { backgroundColor: '#f5a524' },
-  legendText: { color: '#d7dce3', fontSize: 10 },
+  legend: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 9,
+    marginTop: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 9,
+    backgroundColor: 'rgba(8,13,20,0.84)',
+    maxWidth: '96%',
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendDot: { width: 7, height: 7, borderRadius: 4 },
+  freeDot: { backgroundColor: '#1c9b7a' },
+  busyDot: { backgroundColor: '#d95757' },
+  currentDot: { backgroundColor: '#e7b44b' },
+  legendText: { color: '#d7dce3', fontSize: 9 },
+  legendMeta: { color: '#8290a1', fontSize: 8 },
   spacer: { flex: 1 },
-  bottomCard: { maxHeight: '58%', marginBottom: 8, overflow: 'hidden', backgroundColor: 'rgba(10,15,22,0.96)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)' },
-  bottomCardTall: { maxHeight: '72%' },
+  bottomCard: {
+    maxHeight: '32%',
+    minHeight: 176,
+    marginBottom: 5,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(8,13,20,0.97)',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(242,209,139,0.24)',
+  },
+  bottomCardExpanded: { maxHeight: '67%' },
+  sheetHandleArea: { alignItems: 'center', paddingTop: 7, paddingBottom: 3 },
+  sheetHandle: { width: 48, height: 4, borderRadius: 3, backgroundColor: '#4d5868' },
+  sheetHint: { color: '#697587', fontSize: 8, marginTop: 3 },
   scroll: { flexGrow: 0 },
-  scrollContent: { padding: 16 },
+  scrollContent: { paddingHorizontal: 14, paddingTop: 5, paddingBottom: 14 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  eyebrow: { color: '#8d99a8', fontSize: 10, letterSpacing: 1.4, fontWeight: '700' },
-  cellTitle: { color: '#f6f7f9', fontSize: 14, fontWeight: '800', marginTop: 3 },
-  badge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 6 },
+  eyebrow: { color: '#8d99a8', fontSize: 9, letterSpacing: 1.25, fontWeight: '700' },
+  cellTitle: { color: '#f6f7f9', fontSize: 13, fontWeight: '800', marginTop: 2 },
+  badge: { borderRadius: 18, paddingHorizontal: 9, paddingVertical: 5 },
   badgeBusy: { backgroundColor: 'rgba(184,58,58,0.28)' },
   badgeFree: { backgroundColor: 'rgba(28,123,110,0.28)' },
-  badgeText: { color: '#f4e8c8', fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
-  infoBox: { marginTop: 12, padding: 11, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.045)' },
-  infoTitle: { color: '#f5c451', fontSize: 15, fontWeight: '800' },
-  infoText: { color: '#b8c0cc', fontSize: 12, marginTop: 5 },
-  actionButton: { marginTop: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 12, backgroundColor: '#f5c451' },
-  actionButtonText: { color: '#11161d', fontSize: 11, fontWeight: '900', letterSpacing: 0.65 },
+  badgeText: { color: '#f4e8c8', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 },
+  infoBox: { marginTop: 9, padding: 9, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.045)' },
+  infoTitle: { color: '#f5c451', fontSize: 14, fontWeight: '800' },
+  infoText: { color: '#b8c0cc', fontSize: 11, marginTop: 4 },
+  actionButton: { marginTop: 8, minHeight: 39, justifyContent: 'center', alignItems: 'center', borderRadius: 11, backgroundColor: '#f5c451' },
+  actionButtonText: { color: '#11161d', fontSize: 10, fontWeight: '900', letterSpacing: 0.55 },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.82 },
-  inlineLoading: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  productionCard: { marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: 'rgba(245,196,81,0.08)', borderWidth: 1, borderColor: 'rgba(245,196,81,0.25)' },
-  productionRate: { color: '#f5c451', fontSize: 11, fontWeight: '900' },
-  scanResults: { marginTop: 14 },
-  scanId: { color: '#687586', fontSize: 9, marginBottom: 5 },
-  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  stat: { flex: 1, padding: 9, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.045)' },
-  statValue: { color: '#f5c451', fontSize: 13, fontWeight: '800' },
-  statLabel: { color: '#8792a2', fontSize: 9, marginTop: 2 },
-  depositCard: { marginTop: 7, padding: 11, borderRadius: 11, backgroundColor: 'rgba(28,123,110,0.12)', borderWidth: 1, borderColor: 'rgba(28,123,110,0.28)' },
-  depositName: { color: '#f3f4f6', fontSize: 13, fontWeight: '800' },
-  rarity: { color: '#f5c451', fontSize: 10, fontWeight: '900' },
-  depositText: { color: '#aeb7c3', fontSize: 11, marginTop: 4 },
-  emptyText: { color: '#9ba5b2', fontSize: 12, marginTop: 8 },
-  inventoryBox: { marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.035)' },
-  inventoryRow: { marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  inventoryName: { color: '#cbd2dc', fontSize: 12 },
-  inventoryValue: { color: '#f5c451', fontSize: 12, fontWeight: '800' },
-  devText: { color: '#5f6a78', fontSize: 9, marginTop: 14 },
+  inlineLoading: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  productionCard: { marginTop: 10, padding: 10, borderRadius: 11, backgroundColor: 'rgba(245,196,81,0.08)', borderWidth: 1, borderColor: 'rgba(245,196,81,0.25)' },
+  productionRate: { color: '#f5c451', fontSize: 10, fontWeight: '900' },
+  scanResults: { marginTop: 11 },
+  scanId: { color: '#687586', fontSize: 8, marginBottom: 4 },
+  statsRow: { flexDirection: 'row', gap: 7, marginBottom: 8 },
+  stat: { flex: 1, padding: 8, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.045)' },
+  statValue: { color: '#f5c451', fontSize: 12, fontWeight: '800' },
+  statLabel: { color: '#8792a2', fontSize: 8, marginTop: 2 },
+  depositCard: { marginTop: 6, padding: 9, borderRadius: 10, backgroundColor: 'rgba(28,123,110,0.12)', borderWidth: 1, borderColor: 'rgba(28,123,110,0.28)' },
+  depositName: { color: '#f3f4f6', fontSize: 12, fontWeight: '800' },
+  rarity: { color: '#f5c451', fontSize: 9, fontWeight: '900' },
+  depositText: { color: '#aeb7c3', fontSize: 10, marginTop: 3 },
+  emptyText: { color: '#9ba5b2', fontSize: 11, marginTop: 7 },
+  inventoryBox: { marginTop: 11, padding: 10, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
+  inventoryRow: { marginTop: 7, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  inventoryName: { color: '#cbd2dc', fontSize: 11 },
+  inventoryValue: { color: '#f5c451', fontSize: 11, fontWeight: '800' },
+  devText: { color: '#5f6a78', fontSize: 8, marginTop: 11 },
 });
