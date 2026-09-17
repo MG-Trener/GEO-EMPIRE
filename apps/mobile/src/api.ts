@@ -11,6 +11,8 @@ import type {
   MarketSaleResponse,
   PlayerSummary,
   StartExtractionResponse,
+  StoreCatalog,
+  StorePurchaseResponse,
 } from './types';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
@@ -103,6 +105,24 @@ export async function sellResource(input: {
       playerId: input.playerId ?? DEMO_PLAYER_ID,
       resourceId: input.resourceId,
       quantity: input.quantity,
+    }),
+  });
+}
+
+export async function getStore(playerId = DEMO_PLAYER_ID): Promise<StoreCatalog> {
+  return requestJson<StoreCatalog>(`${API_URL}/api/v1/store/${encodeURIComponent(playerId)}`);
+}
+
+export async function purchaseStorePack(input: {
+  packCode: string;
+  playerId?: string;
+}): Promise<StorePurchaseResponse> {
+  return requestJson<StorePurchaseResponse>(`${API_URL}/api/v1/store/purchase`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      playerId: input.playerId ?? DEMO_PLAYER_ID,
+      packCode: input.packCode,
     }),
   });
 }

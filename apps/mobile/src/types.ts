@@ -216,3 +216,28 @@ export type MarketSaleResponse = {
   inventoryQuantity: number;
   wallet: { soft: number; premium: number };
 };
+
+export type StorePack = {
+  code: string;
+  name: string;
+  description: string;
+  premiumPrice: number;
+  softGrant: number;
+  resourceGrants: Array<{ resourceCode: string; quantity: number }>;
+  badge?: string;
+};
+
+export type StoreCatalog = {
+  playerId: string;
+  wallet: { soft: number; premium: number };
+  packs: StorePack[];
+};
+
+export type StorePurchaseResponse = {
+  status: 'purchased';
+  pack: { code: string; name: string };
+  chargedPremium: number;
+  grantedSoft: number;
+  grantedResources: Array<{ code: string; name: string; unit: string; quantity: number }>;
+  wallet: { soft: number; premium: number };
+};
