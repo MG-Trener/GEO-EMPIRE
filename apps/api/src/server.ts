@@ -4,6 +4,7 @@ import { buildingRoutes } from './routes/buildings.js';
 import { extractionRoutes } from './routes/extraction.js';
 import { geologyRoutes } from './routes/geology.js';
 import { geologyScanRoutes } from './routes/geology-scan.js';
+import { marketRoutes } from './routes/market.js';
 import { playerRoutes } from './routes/players.js';
 import { territoryRoutes } from './routes/territories.js';
 import { worldRoutes } from './routes/world.js';
@@ -45,6 +46,7 @@ await app.register(geologyScanRoutes, { prefix: '/api/v1/geology' });
 await app.register(territoryRoutes, { prefix: '/api/v1/territories' });
 await app.register(buildingRoutes, { prefix: '/api/v1/buildings' });
 await app.register(extractionRoutes, { prefix: '/api/v1/extraction' });
+await app.register(marketRoutes, { prefix: '/api/v1/market' });
 await app.register(playerRoutes, { prefix: '/api/v1/players' });
 
 const port = Number(process.env.PORT ?? 4000);
