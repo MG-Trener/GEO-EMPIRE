@@ -13,8 +13,15 @@ import * as Location from 'expo-location';
 import { Camera, GeoJSONSource, Layer, Map } from '@maplibre/maplibre-react-native';
 import { cellToBoundary } from 'h3-js';
 import type { FeatureCollection, Polygon } from 'geojson';
-import { DEMO_PLAYER_ID, getApiUrl, locateWorld, previewGeology } from './src/api';
-import type { GeologyPreviewResponse, LocateResponse, WorldCell } from './src/types';
+import {
+  claimTerritory,
+  constructBuilding,
+  DEMO_PLAYER_ID,
+  getApiUrl,
+  locateWorld,
+  runGeologyScan,
+} from './src/api';
+import type { GeologyScanResponse, LocateResponse, WorldCell } from './src/types';
 
 const ASTANA_DEMO = { lat: 51.1694, lng: 71.4491 };
 const MAP_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
@@ -49,17 +56,25 @@ export default function App() {
   const [usingDemoPosition, setUsingDemoPosition] = useState(true);
   const [world, setWorld] = useState<LocateResponse | null>(null);
   const [selectedCell, setSelectedCell] = useState<WorldCell | null>(null);
-  const [scan, setScan] = useState<GeologyPreviewResponse | null>(null);
+  const [scan, setScan] = useState<GeologyScanResponse | null>(null);
   const [loadingWorld, setLoadingWorld] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [action, setAction] = useState<'claim' | 'build' | null>(null);
   const [message, setMessage] = useState('Подготовка карты…');
 
-  const refreshWorld = useCallback(async (next: { lat: number; lng: number }) => {
+  const refreshWorld = useCallback(async (
+    next: { lat: number; lng: number },
+    keepSelectedH3?: string,
+  ) => {
     setLoadingWorld(true);
     try {
       const response = await locateWorld(next.lat, next.lng, 2);
       setWorld(response);
-      setSelectedCell(response.currentCell);
+      setSelectedCell(
+        keepSelectedH3
+          ? response.cells.find((cell) => cell.h3Index === keepSelectedH3) ?? response.currentCell
+          : response.currentCell,
+      );
       setScan(null);
       setMessage(`H3 r12 · ${response.cells.length} ячеек загружено`);
     } catch (error) {
@@ -85,7 +100,7 @@ export default function App() {
             return;
           }
         } catch {
-          // Use the deterministic development sector below.
+          // Use deterministic development coordinates below.
         }
       }
 
@@ -111,25 +126,68 @@ export default function App() {
   }), [position]);
 
   const runScan = useCallback(async () => {
-    const target = selectedCell?.center ?? position;
+    if (!selectedCell) return;
     setScanning(true);
     setScan(null);
     try {
-      const result = await previewGeology({
+      const result = await runGeologyScan({
         playerId: DEMO_PLAYER_ID,
         playerLat: position.lat,
         playerLng: position.lng,
-        targetLat: target.lat,
-        targetLng: target.lng,
+        targetLat: selectedCell.center.lat,
+        targetLng: selectedCell.center.lng,
       });
       setScan(result);
-      setMessage(result.deposits.length ? `Обнаружено залежей: ${result.deposits.length}` : 'Доступных залежей не обнаружено');
+      setMessage(result.deposits.length
+        ? `Разведка сохранена · обнаружено залежей: ${result.deposits.length}`
+        : 'Разведка сохранена · доступных залежей не обнаружено');
     } catch (error) {
       setMessage(`Разведка: ${error instanceof Error ? error.message : 'ошибка'}`);
     } finally {
       setScanning(false);
     }
   }, [position, selectedCell]);
+
+  const claimSelected = useCallback(async () => {
+    if (!selectedCell) return;
+    setAction('claim');
+    try {
+      const result = await claimTerritory({
+        playerId: DEMO_PLAYER_ID,
+        playerLat: position.lat,
+        playerLng: position.lng,
+        h3Index: selectedCell.h3Index,
+      });
+      await refreshWorld(position, selectedCell.h3Index);
+      setMessage(result.status === 'already_owned'
+        ? 'Этот участок уже принадлежит вашей компании'
+        : `Участок арендован · списано ${formatNumber(result.charged)} ₡`);
+    } catch (error) {
+      setMessage(`Аренда участка: ${error instanceof Error ? error.message : 'ошибка'}`);
+    } finally {
+      setAction(null);
+    }
+  }, [position, refreshWorld, selectedCell]);
+
+  const buildMine = useCallback(async () => {
+    if (!selectedCell) return;
+    setAction('build');
+    try {
+      const result = await constructBuilding({
+        playerId: DEMO_PLAYER_ID,
+        h3Index: selectedCell.h3Index,
+        buildingCode: 'MINE',
+      });
+      await refreshWorld(position, selectedCell.h3Index);
+      setMessage(`Строительство «${result.building.name}» начато · списано ${formatNumber(result.charged)} ₡`);
+    } catch (error) {
+      setMessage(`Строительство: ${error instanceof Error ? error.message : 'ошибка'}`);
+    } finally {
+      setAction(null);
+    }
+  }, [position, refreshWorld, selectedCell]);
+
+  const ownedByPlayer = selectedCell?.claim?.ownerId === DEMO_PLAYER_ID;
 
   return (
     <View style={styles.root}>
@@ -204,18 +262,41 @@ export default function App() {
                 <Text style={styles.infoTitle}>{selectedCell.building.name ?? selectedCell.building.code}</Text>
                 <Text style={styles.infoText}>Уровень: {selectedCell.building.level ?? 1}</Text>
                 <Text style={styles.infoText}>Владелец: {selectedCell.claim?.ownerName ?? 'неизвестно'}</Text>
+                <Text style={styles.infoText}>Статус: {selectedCell.building.status ?? '—'}</Text>
+              </View>
+            ) : selectedCell?.claim ? (
+              <View style={styles.infoBox}>
+                <Text style={styles.infoTitle}>{ownedByPlayer ? 'Участок вашей компании' : 'Чужая территория'}</Text>
+                <Text style={styles.infoText}>Владелец: {selectedCell.claim.ownerName ?? 'неизвестно'}</Text>
               </View>
             ) : (
-              <Text style={styles.infoText}>На участке нет зарегистрированного игрового объекта.</Text>
+              <Text style={styles.infoText}>Свободный участок. Его можно исследовать и арендовать.</Text>
             )}
 
-            <Pressable
-              disabled={scanning || !selectedCell}
+            {selectedCell && !selectedCell.claim ? (
+              <ActionButton
+                busy={action === 'claim'}
+                disabled={action !== null}
+                label="АРЕНДОВАТЬ УЧАСТОК · 5 000 ₡"
+                onPress={() => void claimSelected()}
+              />
+            ) : null}
+
+            {selectedCell && ownedByPlayer && !selectedCell.building ? (
+              <ActionButton
+                busy={action === 'build'}
+                disabled={action !== null}
+                label="ПОСТРОИТЬ ШАХТУ · 10 000 ₡"
+                onPress={() => void buildMine()}
+              />
+            ) : null}
+
+            <ActionButton
+              busy={scanning}
+              disabled={scanning || !selectedCell || action !== null}
+              label="ПРОВЕСТИ ГЕОРАЗВЕДКУ"
               onPress={() => void runScan()}
-              style={({ pressed }) => [styles.scanButton, (scanning || !selectedCell) && styles.disabled, pressed && styles.pressed]}
-            >
-              {scanning ? <ActivityIndicator color="#11161d" /> : <Text style={styles.scanButtonText}>ПРОВЕСТИ ГЕОРАЗВЕДКУ</Text>}
-            </Pressable>
+            />
 
             {scan ? (
               <View style={styles.scanResults}>
@@ -224,6 +305,7 @@ export default function App() {
                   <Stat value={`${scan.capabilities.rangeMeters} м`} label="дальность" />
                   <Stat value={`${Math.round(scan.capabilities.confidence * 100)}%`} label="точность" />
                 </View>
+                <Text style={styles.scanId}>Отчёт: {scan.scanId.slice(0, 8)}</Text>
                 {scan.deposits.length ? scan.deposits.map((deposit) => (
                   <View key={deposit.id} style={styles.depositCard}>
                     <View style={styles.rowBetween}>
@@ -231,7 +313,7 @@ export default function App() {
                       <Text style={styles.rarity}>R{deposit.resource.rarity}</Text>
                     </View>
                     <Text style={styles.depositText}>Запасы: {formatNumber(deposit.estimates.quantity.min)}–{formatNumber(deposit.estimates.quantity.max)} {deposit.resource.unit}</Text>
-                    <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters.min)}–{formatNumber(deposit.estimates.depthToMeters.max)} м</Text>
+                    <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters)}–{formatNumber(deposit.estimates.depthToMeters)} м</Text>
                   </View>
                 )) : <Text style={styles.emptyText}>Доступных вашему уровню геологии залежей не найдено.</Text>}
               </View>
@@ -253,6 +335,28 @@ function Stat({ value, label }: { value: string; label: string }) {
   return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>;
 }
 
+function ActionButton({
+  busy,
+  disabled,
+  label,
+  onPress,
+}: {
+  busy: boolean;
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionButton, disabled && styles.disabled, pressed && styles.pressed]}
+    >
+      {busy ? <ActivityIndicator color="#11161d" /> : <Text style={styles.actionButtonText}>{label}</Text>}
+    </Pressable>
+  );
+}
+
 const absolute = { position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0 };
 
 const styles = StyleSheet.create({
@@ -271,7 +375,7 @@ const styles = StyleSheet.create({
   currentDot: { backgroundColor: '#f5a524' },
   legendText: { color: '#d7dce3', fontSize: 10 },
   spacer: { flex: 1 },
-  bottomCard: { maxHeight: '46%', marginBottom: 8, overflow: 'hidden', backgroundColor: 'rgba(10,15,22,0.96)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)' },
+  bottomCard: { maxHeight: '52%', marginBottom: 8, overflow: 'hidden', backgroundColor: 'rgba(10,15,22,0.96)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)' },
   scroll: { flexGrow: 0 },
   scrollContent: { padding: 16 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
@@ -284,11 +388,12 @@ const styles = StyleSheet.create({
   infoBox: { marginTop: 12, padding: 11, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.045)' },
   infoTitle: { color: '#f5c451', fontSize: 15, fontWeight: '800' },
   infoText: { color: '#b8c0cc', fontSize: 12, marginTop: 5 },
-  scanButton: { marginTop: 14, minHeight: 46, justifyContent: 'center', alignItems: 'center', borderRadius: 12, backgroundColor: '#f5c451' },
-  scanButtonText: { color: '#11161d', fontSize: 12, fontWeight: '900', letterSpacing: 0.8 },
+  actionButton: { marginTop: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 12, backgroundColor: '#f5c451' },
+  actionButtonText: { color: '#11161d', fontSize: 11, fontWeight: '900', letterSpacing: 0.65 },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.82 },
   scanResults: { marginTop: 14 },
+  scanId: { color: '#687586', fontSize: 9, marginBottom: 5 },
   statsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   stat: { flex: 1, padding: 9, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.045)' },
   statValue: { color: '#f5c451', fontSize: 13, fontWeight: '800' },
