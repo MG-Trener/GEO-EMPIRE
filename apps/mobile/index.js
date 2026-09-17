@@ -1,4 +1,4 @@
 import { registerRootComponent } from 'expo';
-import App from './App';
+import { OnboardingGate } from './src/OnboardingGate';
 
-registerRootComponent(App);
+registerRootComponent(OnboardingGate);
