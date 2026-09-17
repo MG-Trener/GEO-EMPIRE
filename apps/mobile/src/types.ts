@@ -146,13 +146,22 @@ export type ExtractionResource = {
   unit: string;
 };
 
+export type ExtractionEconomics = {
+  source: 'development_project' | 'legacy';
+  projectId: string | null;
+  opexPerUnit: number;
+  operatingCostDue?: number;
+};
+
 export type ExtractionStatus = {
   buildingId: string;
   status: 'running' | 'paused' | 'depleted';
   ratePerHour: number;
+  plannedDailyOutput?: number;
   maxBufferHours: number;
   availableToCollect: number;
   lastCollectedAt: string;
+  economics?: ExtractionEconomics;
   deposit: {
     id: string;
     resource: ExtractionResource;
@@ -169,7 +178,9 @@ export type StartExtractionResponse = {
     quantityRemaining: number;
   };
   ratePerHour: number;
+  plannedDailyOutput?: number;
   maxBufferHours: number;
+  economics?: ExtractionEconomics;
 };
 
 export type CollectExtractionResponse = {
@@ -179,6 +190,12 @@ export type CollectExtractionResponse = {
   resource: ExtractionResource;
   inventoryQuantity: number;
   depositQuantityRemaining: number;
+  economics?: {
+    projectId: string | null;
+    opexPerUnit: number;
+    operatingCost: number;
+    walletSoft: number | null;
+  };
 };
 
 export type InventoryItem = {
