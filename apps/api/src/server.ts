@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { closeDatabase, db } from './db.js';
 import { buildingRoutes } from './routes/buildings.js';
+import { extractionRoutes } from './routes/extraction.js';
 import { geologyRoutes } from './routes/geology.js';
 import { geologyScanRoutes } from './routes/geology-scan.js';
 import { playerRoutes } from './routes/players.js';
@@ -43,6 +44,7 @@ await app.register(geologyRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyScanRoutes, { prefix: '/api/v1/geology' });
 await app.register(territoryRoutes, { prefix: '/api/v1/territories' });
 await app.register(buildingRoutes, { prefix: '/api/v1/buildings' });
+await app.register(extractionRoutes, { prefix: '/api/v1/extraction' });
 await app.register(playerRoutes, { prefix: '/api/v1/players' });
 
 const port = Number(process.env.PORT ?? 4000);
