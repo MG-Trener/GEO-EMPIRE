@@ -1,4 +1,12 @@
-import type { GeologyScanResponse, LocateResponse, PlayerSummary } from './types';
+import type {
+  CollectExtractionResponse,
+  ExtractionStatus,
+  GeologyScanResponse,
+  InventoryItem,
+  LocateResponse,
+  PlayerSummary,
+  StartExtractionResponse,
+} from './types';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
 
@@ -74,6 +82,45 @@ export async function constructBuilding(input: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
+}
+
+export async function startExtraction(input: {
+  playerId: string;
+  buildingId: string;
+  depositId: string | number;
+}): Promise<StartExtractionResponse> {
+  return requestJson<StartExtractionResponse>(`${API_URL}/api/v1/extraction/start`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getExtractionStatus(
+  buildingId: string,
+  playerId = DEMO_PLAYER_ID,
+): Promise<ExtractionStatus> {
+  const params = new URLSearchParams({ playerId });
+  return requestJson<ExtractionStatus>(
+    `${API_URL}/api/v1/extraction/${encodeURIComponent(buildingId)}?${params.toString()}`,
+  );
+}
+
+export async function collectExtraction(input: {
+  playerId: string;
+  buildingId: string;
+}): Promise<CollectExtractionResponse> {
+  return requestJson<CollectExtractionResponse>(`${API_URL}/api/v1/extraction/collect`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getInventory(playerId = DEMO_PLAYER_ID): Promise<InventoryItem[]> {
+  return requestJson<InventoryItem[]>(
+    `${API_URL}/api/v1/extraction/inventory/${encodeURIComponent(playerId)}`,
+  );
 }
 
 export function getApiUrl(): string {
