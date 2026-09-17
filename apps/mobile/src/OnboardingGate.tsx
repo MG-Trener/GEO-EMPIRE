@@ -14,6 +14,7 @@ import {
 import * as Application from 'expo-application';
 import App from '../App';
 import { bootstrapPlayer, getApiUrl, setActivePlayerId } from './api';
+import { FirstMissionGuide } from './FirstMissionGuide';
 import type { PlayerSummary } from './types';
 
 type Stage = 'loading' | 'create' | 'created' | 'ready';
@@ -115,7 +116,12 @@ export function OnboardingGate() {
   };
 
   if (stage === 'ready' && player) {
-    return <App />;
+    return (
+      <View style={styles.gameRoot}>
+        <App />
+        <FirstMissionGuide playerId={player.id} initialPlayer={player} />
+      </View>
+    );
   }
 
   return (
@@ -219,6 +225,7 @@ function PrimaryButton({ label, onPress, disabled = false }: { label: string; on
 }
 
 const styles = StyleSheet.create({
+  gameRoot: { flex: 1 },
   root: { flex: 1, backgroundColor: '#071018' },
   safe: { flex: 1 },
   flex: { flex: 1, paddingHorizontal: 22, paddingBottom: 18 },
