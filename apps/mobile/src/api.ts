@@ -1,4 +1,4 @@
-import type { GeologyPreviewResponse, LocateResponse } from './types';
+import type { GeologyScanResponse, LocateResponse } from './types';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
 
@@ -34,8 +34,8 @@ export async function runGeologyScan(input: {
   playerLng: number;
   targetLat: number;
   targetLng: number;
-}): Promise<GeologyPreviewResponse & { scanId: string }> {
-  return requestJson<GeologyPreviewResponse & { scanId: string }>(`${API_URL}/api/v1/geology/scan`, {
+}): Promise<GeologyScanResponse> {
+  return requestJson<GeologyScanResponse>(`${API_URL}/api/v1/geology/scan`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
