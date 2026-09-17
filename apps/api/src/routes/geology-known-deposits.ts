@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db.js';
+import { getResourceMarketPrice } from '../game/market-config.js';
 
 const paramsSchema = z.object({ playerId: z.string().uuid() });
 
@@ -19,6 +20,48 @@ type KnownDepositRow = {
   active_method: string | null;
   active_completes_at: string | null;
 };
+
+function buildInvestmentProfile(
+  resourceCode: string,
+  quantityMin: number,
+  quantityMax: number,
+  confidence: number,
+) {
+  const marketPrice = getResourceMarketPrice(resourceCode);
+  const safeMin = Math.max(0, quantityMin);
+  const safeMax = Math.max(safeMin, quantityMax);
+  const midpoint = (safeMin + safeMax) / 2;
+  const uncertainty = midpoint > 0 ? (safeMax - safeMin) / midpoint : 1;
+
+  const risk = confidence >= 0.95
+    ? 'low'
+    : confidence >= 0.8
+      ? 'moderate'
+      : confidence >= 0.55
+        ? 'elevated'
+        : 'high';
+
+  const recommendation = confidence >= 0.95
+    ? 'Модель достаточно точна для инвестиционного решения.'
+    : confidence >= 0.8
+      ? 'Можно планировать разработку, но дополнительная разведка заметно снизит риск.'
+      : confidence >= 0.55
+        ? 'Рекомендуется продолжить геологоразведку перед крупными вложениями.'
+        : 'Высокая неопределённость. Сначала уточните месторождение.';
+
+  return {
+    marketPricePerUnit: marketPrice,
+    grossValue: marketPrice
+      ? {
+          min: Math.floor(safeMin * marketPrice),
+          max: Math.floor(safeMax * marketPrice),
+        }
+      : null,
+    uncertainty: Math.round(uncertainty * 10_000) / 10_000,
+    risk,
+    recommendation,
+  };
+}
 
 export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<void> {
   app.get('/:playerId/deposits', async (request, reply) => {
@@ -75,26 +118,38 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
 
     return {
       playerId: parsed.data.playerId,
-      deposits: result.rows.map((row) => ({
-        id: row.deposit_id,
-        h3Index: row.h3_index,
-        resource: {
-          code: row.resource_code,
-          name: row.resource_name,
-          rarity: Number(row.rarity),
-          unit: row.unit,
-        },
-        confidence: Number(row.confidence ?? 0),
-        estimatedQuantity: {
-          min: Number(row.estimated_quantity_min ?? 0),
-          max: Number(row.estimated_quantity_max ?? 0),
-        },
-        completedStudies: Number(row.completed_studies),
-        activeStudy: row.active_method
-          ? { method: row.active_method, completesAt: row.active_completes_at }
-          : null,
-        updatedAt: row.updated_at,
-      })),
+      deposits: result.rows.map((row) => {
+        const confidence = Number(row.confidence ?? 0);
+        const quantityMin = Number(row.estimated_quantity_min ?? 0);
+        const quantityMax = Number(row.estimated_quantity_max ?? 0);
+
+        return {
+          id: row.deposit_id,
+          h3Index: row.h3_index,
+          resource: {
+            code: row.resource_code,
+            name: row.resource_name,
+            rarity: Number(row.rarity),
+            unit: row.unit,
+          },
+          confidence,
+          estimatedQuantity: {
+            min: quantityMin,
+            max: quantityMax,
+          },
+          investment: buildInvestmentProfile(
+            row.resource_code,
+            quantityMin,
+            quantityMax,
+            confidence,
+          ),
+          completedStudies: Number(row.completed_studies),
+          activeStudy: row.active_method
+            ? { method: row.active_method, completesAt: row.active_completes_at }
+            : null,
+          updatedAt: row.updated_at,
+        };
+      }),
     };
   });
 }

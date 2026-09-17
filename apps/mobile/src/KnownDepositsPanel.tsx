@@ -3,12 +3,21 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { DEMO_PLAYER_ID, getApiUrl } from './api';
 import { DepositInvestigationPanel } from './DepositInvestigationPanel';
 
+type InvestmentRisk = 'low' | 'moderate' | 'elevated' | 'high';
+
 type KnownDeposit = {
   id: string;
   h3Index: string;
   resource: { code: string; name: string; rarity: number; unit: string };
   confidence: number;
   estimatedQuantity: { min: number; max: number };
+  investment: {
+    marketPricePerUnit: number | null;
+    grossValue: { min: number; max: number } | null;
+    uncertainty: number;
+    risk: InvestmentRisk;
+    recommendation: string;
+  };
   completedStudies: number;
   activeStudy: null | { method: string; completesAt: string | null };
   updatedAt: string;
@@ -16,8 +25,22 @@ type KnownDeposit = {
 
 type Response = { playerId: string; deposits: KnownDeposit[] };
 
+const riskLabels: Record<InvestmentRisk, string> = {
+  low: 'НИЗКИЙ РИСК',
+  moderate: 'УМЕРЕННЫЙ РИСК',
+  elevated: 'ПОВЫШЕННЫЙ РИСК',
+  high: 'ВЫСОКИЙ РИСК',
+};
+
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatMoney(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} млрд ₡`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} млн ₡`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(0)} тыс. ₡`;
+  return `${formatNumber(value)} ₡`;
 }
 
 async function loadDeposits(): Promise<KnownDeposit[]> {
@@ -123,6 +146,8 @@ export function KnownDepositsPanel({ onMessage }: { onMessage?: (message: string
         })}
       </View>
 
+      <InvestmentCard deposit={selected} />
+
       <DepositInvestigationPanel
         key={selected.id}
         depositId={selected.id}
@@ -131,6 +156,38 @@ export function KnownDepositsPanel({ onMessage }: { onMessage?: (message: string
           void refresh();
         }}
       />
+    </View>
+  );
+}
+
+function InvestmentCard({ deposit }: { deposit: KnownDeposit }) {
+  const gross = deposit.investment.grossValue;
+  return (
+    <View style={styles.investmentCard}>
+      <View style={styles.headerRow}>
+        <View style={styles.flex}>
+          <Text style={styles.investmentEyebrow}>ИНВЕСТИЦИОННЫЙ ПРОФИЛЬ</Text>
+          <Text style={styles.investmentTitle}>{deposit.resource.name}</Text>
+        </View>
+        <View style={[styles.riskBadge, styles[`risk_${deposit.investment.risk}`]]}>
+          <Text style={styles.riskText}>{riskLabels[deposit.investment.risk]}</Text>
+        </View>
+      </View>
+
+      {gross ? (
+        <>
+          <Text style={styles.valueLabel}>ПОТЕНЦИАЛЬНАЯ ВАЛОВАЯ СТОИМОСТЬ</Text>
+          <Text style={styles.valueRange}>{formatMoney(gross.min)} – {formatMoney(gross.max)}</Text>
+          <Text style={styles.valueMeta}>
+            Рыночная цена: {formatNumber(deposit.investment.marketPricePerUnit ?? 0)} ₡/{deposit.resource.unit} · неопределённость {Math.round(deposit.investment.uncertainty * 100)}%
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.valueMeta}>Для этого ресурса пока нет рыночной котировки.</Text>
+      )}
+
+      <Text style={styles.recommendation}>{deposit.investment.recommendation}</Text>
+      <Text style={styles.disclaimer}>Оценка показывает валовой потенциал запасов до затрат на строительство, добычу, энергетику и переработку.</Text>
     </View>
   );
 }
@@ -158,5 +215,19 @@ const styles = StyleSheet.create({
   confidence: { color: '#f5c451', fontSize: 12, fontWeight: '900' },
   stage: { color: '#8fa0ad', fontSize: 8, marginTop: 2 },
   running: { color: '#79c7ff', fontSize: 7, fontWeight: '900', marginTop: 3 },
+  investmentCard: { padding: 11, borderRadius: 12, backgroundColor: 'rgba(245,196,81,0.065)', borderWidth: 1, borderColor: 'rgba(245,196,81,0.2)' },
+  investmentEyebrow: { color: '#a88745', fontSize: 8, fontWeight: '800', letterSpacing: 1 },
+  investmentTitle: { color: '#f2f4f6', fontSize: 13, fontWeight: '900', marginTop: 2 },
+  riskBadge: { paddingHorizontal: 7, paddingVertical: 5, borderRadius: 8 },
+  risk_low: { backgroundColor: 'rgba(85,166,122,0.2)' },
+  risk_moderate: { backgroundColor: 'rgba(214,155,55,0.18)' },
+  risk_elevated: { backgroundColor: 'rgba(220,124,56,0.18)' },
+  risk_high: { backgroundColor: 'rgba(196,77,77,0.2)' },
+  riskText: { color: '#e6e9eb', fontSize: 7, fontWeight: '900' },
+  valueLabel: { color: '#7d8995', fontSize: 7, fontWeight: '700', letterSpacing: 0.7, marginTop: 10 },
+  valueRange: { color: '#f5c451', fontSize: 18, fontWeight: '900', marginTop: 3 },
+  valueMeta: { color: '#86939f', fontSize: 8, lineHeight: 12, marginTop: 3 },
+  recommendation: { color: '#cbd2d7', fontSize: 9, lineHeight: 13, marginTop: 8 },
+  disclaimer: { color: '#65717d', fontSize: 7, lineHeight: 10, marginTop: 6 },
   pressed: { opacity: 0.82 },
 });
