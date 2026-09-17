@@ -54,6 +54,11 @@ export function FirstMissionGuide({ playerId, initialPlayer }: Props) {
   const [refreshing, setRefreshing] = useState(false);
 
   const mission = useMemo(() => missionFor(player), [player]);
+  const progressWidth: '33%' | '66%' | '100%' = mission.complete || mission.step >= 3
+    ? '100%'
+    : mission.step === 2
+      ? '66%'
+      : '33%';
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -91,12 +96,7 @@ export function FirstMissionGuide({ playerId, initialPlayer }: Props) {
 
         <View style={styles.footer}>
           <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: mission.complete ? '100%' : `${Math.max(10, (mission.step - 1) * 50)}%` },
-              ]}
-            />
+            <View style={[styles.progressFill, { width: progressWidth }]} />
           </View>
           {!mission.complete ? (
             <Pressable disabled={refreshing} onPress={() => void refresh()} style={styles.refreshButton}>
