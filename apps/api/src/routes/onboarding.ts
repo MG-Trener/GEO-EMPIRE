@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../db.js';
 
@@ -24,7 +25,7 @@ type PlayerRow = {
   known_deposits: string;
 };
 
-async function loadPlayer(client: { query: typeof db.query }, playerId: string): Promise<PlayerRow | undefined> {
+async function loadPlayer(client: PoolClient, playerId: string): Promise<PlayerRow | undefined> {
   const result = await client.query<PlayerRow>(
     `
       SELECT
