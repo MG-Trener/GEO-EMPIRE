@@ -139,7 +139,7 @@ export function buildDevelopmentOptions(input: BuildInput): DevelopmentOption[] 
   const qualityFactor = Math.min(1, Math.max(0.7, 0.7 + (averageQuality / 100) * 0.3));
   const confidence = Math.min(0.999, Math.max(0, input.confidence));
 
-  const options = viableMethods(input.resourceCode, input.depthFromMeters, input.depthToMeters).map((method) => {
+  const options: DevelopmentOption[] = viableMethods(input.resourceCode, input.depthFromMeters, input.depthToMeters).map((method): DevelopmentOption => {
     const config = METHOD_CONFIG[method];
     const capex = Math.round(config.baseCapex + averageDepth * config.capexPerMeter);
     const depthOpexFraction = Math.min(config.maxDepthOpexFraction, averageDepth * config.depthOpexPerMeter);
@@ -178,7 +178,7 @@ export function buildDevelopmentOptions(input: BuildInput): DevelopmentOption[] 
       geologyConfidence: round(confidence, 4),
       approvalReady: confidence >= 0.85,
       recommended: false,
-    } satisfies DevelopmentOption;
+    };
   });
 
   const candidates = options.filter((option) => option.paybackDays !== null && option.projectValue > 0);
