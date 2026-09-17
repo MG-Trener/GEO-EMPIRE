@@ -64,3 +64,23 @@ export type GeologyPreviewResponse = {
   };
   deposits: GeologyDeposit[];
 };
+
+export type GeologyScanResponse = {
+  scanId: string;
+  playerId: string;
+  playerPosition: { lat: number; lng: number };
+  target: { lat: number; lng: number; distanceMeters: number };
+  capabilities: GeologyPreviewResponse['capabilities'];
+  deposits: Array<{
+    id: string;
+    h3Index: string;
+    resource: GeologyDeposit['resource'];
+    estimates: {
+      quantity: { min: number; max: number };
+      depthFromMeters: number;
+      depthToMeters: number;
+      quality: number;
+      confidence: number;
+    };
+  }>;
+};
