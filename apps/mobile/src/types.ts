@@ -40,6 +40,46 @@ export type PlayerSummary = {
   stats: { territories: number; buildings: number; knownDeposits: number };
 };
 
+export type GeologySkillKey = 'range' | 'coverage' | 'depth' | 'accuracy' | 'sensitivity';
+
+export type GeologyCapabilities = {
+  rangeMeters: number;
+  coverageRing: number;
+  maxDepthMeters: number;
+  accuracyError: number;
+  maxVisibleRarity: number;
+};
+
+export type GeologyUpgradeOption = {
+  skill: GeologySkillKey;
+  currentLevel: number;
+  nextLevel: number | null;
+  maxed: boolean;
+  price: { soft: number; premium: number } | null;
+  currentValue: number;
+  nextValue: number | null;
+  unit: string;
+};
+
+export type GeologyUpgradeCatalog = {
+  playerId: string;
+  wallet: { soft: number; premium: number };
+  capabilities: GeologyCapabilities;
+  upgrades: GeologyUpgradeOption[];
+};
+
+export type GeologyUpgradeResponse = {
+  status: 'upgraded';
+  playerId: string;
+  skill: GeologySkillKey;
+  level: number;
+  currency: 'soft' | 'premium';
+  charged: number;
+  wallet: { soft: number; premium: number };
+  capabilities: GeologyCapabilities;
+  nextUpgrade: GeologyUpgradeOption;
+};
+
 export type GeologyDeposit = {
   id: string;
   h3Index: string;

@@ -25,6 +25,7 @@ import {
   runGeologyScan,
   startExtraction,
 } from './src/api';
+import { GeologyProgressPanel } from './src/GeologyProgressPanel';
 import type {
   ExtractionStatus,
   GeologyScanResponse,
@@ -72,6 +73,7 @@ export default function App() {
   const [loadingWorld, setLoadingWorld] = useState(false);
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [showGeology, setShowGeology] = useState(false);
   const [action, setAction] = useState<'claim' | 'build' | 'extract' | 'collect' | null>(null);
   const [message, setMessage] = useState('Подготовка карты…');
 
@@ -254,9 +256,10 @@ export default function App() {
         buildingId,
         depositId,
       });
-      const status = await getExtractionStatus(buildingId);
-      setExtraction(status);
-      setMessage(`Добыча «${result.deposit.resource.name}» запущена · ${formatNumber(result.ratePerHour, 2)} ${result.deposit.resource.unit}/ч`);
+      setExtraction(await getExtractionStatus(buildingId));
+      setMessage(
+        `Добыча «${result.deposit.resource.name}» запущена · ${formatNumber(result.ratePerHour, 2)} ${result.deposit.resource.unit}/ч`,
+      );
       await refreshWorld(position, selectedCell.h3Index);
     } catch (error) {
       setMessage(`Запуск добычи: ${error instanceof Error ? error.message : 'ошибка'}`);
@@ -300,6 +303,7 @@ export default function App() {
             if (cell) {
               setSelectedCell(cell);
               setScan(null);
+              setShowGeology(false);
             }
           }}
         >
@@ -330,6 +334,12 @@ export default function App() {
             <Text style={styles.brand}>GEO EMPIRE</Text>
             <Text style={styles.status}>{message}</Text>
           </View>
+          <Pressable
+            onPress={() => setShowGeology((value) => !value)}
+            style={({ pressed }) => [styles.geologyButton, showGeology && styles.geologyButtonActive, pressed && styles.pressed]}
+          >
+            <Text style={styles.geologyButtonText}>{showGeology ? 'КАРТА' : 'ГЕОЛОГИЯ'}</Text>
+          </Pressable>
           {loadingWorld ? <ActivityIndicator /> : null}
         </View>
 
@@ -341,139 +351,36 @@ export default function App() {
 
         <View style={styles.spacer} />
 
-        <View style={styles.bottomCard}>
+        <View style={[styles.bottomCard, showGeology && styles.bottomCardTall]}>
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-            <View style={styles.rowBetween}>
-              <View style={styles.flex}>
-                <Text style={styles.eyebrow}>ТЕРРИТОРИЯ</Text>
-                <Text style={styles.cellTitle} numberOfLines={1}>{selectedCell?.h3Index ?? 'Выберите ячейку'}</Text>
-              </View>
-              <View style={[styles.badge, selectedCell?.occupied ? styles.badgeBusy : styles.badgeFree]}>
-                <Text style={styles.badgeText}>{selectedCell?.occupied ? 'ЗАНЯТО' : 'СВОБОДНО'}</Text>
-              </View>
-            </View>
-
-            {selectedCell?.building ? (
-              <View style={styles.infoBox}>
-                <Text style={styles.infoTitle}>{selectedCell.building.name ?? selectedCell.building.code}</Text>
-                <Text style={styles.infoText}>Уровень: {selectedCell.building.level ?? 1}</Text>
-                <Text style={styles.infoText}>Владелец: {selectedCell.claim?.ownerName ?? 'неизвестно'}</Text>
-                <Text style={styles.infoText}>Статус: {selectedCell.building.status ?? '—'}</Text>
-              </View>
-            ) : selectedCell?.claim ? (
-              <View style={styles.infoBox}>
-                <Text style={styles.infoTitle}>{ownedByPlayer ? 'Участок вашей компании' : 'Чужая территория'}</Text>
-                <Text style={styles.infoText}>Владелец: {selectedCell.claim.ownerName ?? 'неизвестно'}</Text>
-              </View>
+            {showGeology ? (
+              <>
+                <GeologyProgressPanel onMessage={setMessage} />
+                <Text style={styles.devText}>Прокачка применяется к следующим георазведкам сразу после покупки.</Text>
+              </>
             ) : (
-              <Text style={styles.infoText}>Свободный участок. Его можно исследовать и арендовать.</Text>
+              <TerritoryPanel
+                selectedCell={selectedCell}
+                ownedByPlayer={ownedByPlayer}
+                isExtractionBuilding={isExtractionBuilding}
+                action={action}
+                scanning={scanning}
+                loadingExtraction={loadingExtraction}
+                extraction={extraction}
+                scan={scan}
+                inventory={inventory}
+                depositsInSelectedCell={depositsInSelectedCell.length}
+                onClaim={() => void claimSelected()}
+                onBuild={() => void buildMine()}
+                onScan={() => void runScan()}
+                onCollect={() => void collectResources()}
+                onStartExtraction={(depositId) => void beginExtraction(depositId)}
+              />
             )}
 
-            {selectedCell && !selectedCell.claim ? (
-              <ActionButton
-                busy={action === 'claim'}
-                disabled={action !== null}
-                label="АРЕНДОВАТЬ УЧАСТОК · 5 000 ₡"
-                onPress={() => void claimSelected()}
-              />
-            ) : null}
-
-            {selectedCell && ownedByPlayer && !selectedCell.building ? (
-              <ActionButton
-                busy={action === 'build'}
-                disabled={action !== null}
-                label="ПОСТРОИТЬ ШАХТУ · 10 000 ₡"
-                onPress={() => void buildMine()}
-              />
-            ) : null}
-
-            <ActionButton
-              busy={scanning}
-              disabled={scanning || !selectedCell || action !== null}
-              label="ПРОВЕСТИ ГЕОРАЗВЕДКУ"
-              onPress={() => void runScan()}
-            />
-
-            {loadingExtraction ? (
-              <View style={styles.inlineLoading}>
-                <ActivityIndicator size="small" />
-                <Text style={styles.infoText}>Проверка добычи…</Text>
-              </View>
-            ) : null}
-
-            {ownedByPlayer && isExtractionBuilding && extraction ? (
-              <View style={styles.productionCard}>
-                <View style={styles.rowBetween}>
-                  <View style={styles.flex}>
-                    <Text style={styles.eyebrow}>ДОБЫЧА</Text>
-                    <Text style={styles.infoTitle}>{extraction.deposit.resource.name}</Text>
-                  </View>
-                  <Text style={styles.productionRate}>{formatNumber(extraction.ratePerHour, 2)} {extraction.deposit.resource.unit}/ч</Text>
-                </View>
-                <Text style={styles.infoText}>Накоплено: {formatNumber(extraction.availableToCollect, 2)} {extraction.deposit.resource.unit}</Text>
-                <Text style={styles.infoText}>Остаток месторождения: {formatNumber(extraction.deposit.quantityRemaining, 2)} {extraction.deposit.resource.unit}</Text>
-                <ActionButton
-                  busy={action === 'collect'}
-                  disabled={action !== null || extraction.availableToCollect <= 0}
-                  label={`ЗАБРАТЬ · ${formatNumber(extraction.availableToCollect, 2)} ${extraction.deposit.resource.unit}`}
-                  onPress={() => void collectResources()}
-                />
-              </View>
-            ) : null}
-
-            {scan ? (
-              <View style={styles.scanResults}>
-                <View style={styles.statsRow}>
-                  <Stat value={`${scan.capabilities.maxDepthMeters} м`} label="глубина" />
-                  <Stat value={`${scan.capabilities.rangeMeters} м`} label="дальность" />
-                  <Stat value={`${Math.round(scan.capabilities.confidence * 100)}%`} label="точность" />
-                </View>
-                <Text style={styles.scanId}>Отчёт: {scan.scanId.slice(0, 8)}</Text>
-                {scan.deposits.length ? scan.deposits.map((deposit) => {
-                  const canStartHere = ownedByPlayer
-                    && isExtractionBuilding
-                    && !extraction
-                    && deposit.h3Index === selectedCell?.h3Index;
-
-                  return (
-                    <View key={deposit.id} style={styles.depositCard}>
-                      <View style={styles.rowBetween}>
-                        <Text style={styles.depositName}>{deposit.resource.name}</Text>
-                        <Text style={styles.rarity}>R{deposit.resource.rarity}</Text>
-                      </View>
-                      <Text style={styles.depositText}>Запасы: {formatNumber(deposit.estimates.quantity.min)}–{formatNumber(deposit.estimates.quantity.max)} {deposit.resource.unit}</Text>
-                      <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters)}–{formatNumber(deposit.estimates.depthToMeters)} м</Text>
-                      {canStartHere ? (
-                        <ActionButton
-                          busy={action === 'extract'}
-                          disabled={action !== null}
-                          label={`НАЧАТЬ ДОБЫЧУ · ${deposit.resource.name.toUpperCase()}`}
-                          onPress={() => void beginExtraction(deposit.id)}
-                        />
-                      ) : null}
-                    </View>
-                  );
-                }) : <Text style={styles.emptyText}>Доступных вашему уровню геологии залежей не найдено.</Text>}
-
-                {!extraction && ownedByPlayer && isExtractionBuilding && depositsInSelectedCell.length === 0 ? (
-                  <Text style={styles.emptyText}>Для запуска добычи сначала найдите залежь именно в ячейке этого объекта.</Text>
-                ) : null}
-              </View>
-            ) : null}
-
-            {inventory.length ? (
-              <View style={styles.inventoryBox}>
-                <Text style={styles.eyebrow}>СКЛАД КОМПАНИИ</Text>
-                {inventory.map((item) => (
-                  <View key={item.resourceId} style={styles.inventoryRow}>
-                    <Text style={styles.inventoryName}>{item.name}</Text>
-                    <Text style={styles.inventoryValue}>{formatNumber(item.quantity, 2)} {item.unit}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            <Text style={styles.devText}>{usingDemoPosition ? 'DEV: тестовая позиция Астана' : 'GPS: реальное положение'} · API {getApiUrl()}</Text>
+            <Text style={styles.devText}>
+              {usingDemoPosition ? 'DEV: тестовая позиция Астана' : 'GPS: реальное положение'} · API {getApiUrl()}
+            </Text>
           </ScrollView>
         </View>
       </SafeAreaView>
@@ -481,12 +388,191 @@ export default function App() {
   );
 }
 
+function TerritoryPanel({
+  selectedCell,
+  ownedByPlayer,
+  isExtractionBuilding,
+  action,
+  scanning,
+  loadingExtraction,
+  extraction,
+  scan,
+  inventory,
+  depositsInSelectedCell,
+  onClaim,
+  onBuild,
+  onScan,
+  onCollect,
+  onStartExtraction,
+}: {
+  selectedCell: WorldCell | null;
+  ownedByPlayer: boolean;
+  isExtractionBuilding: boolean;
+  action: 'claim' | 'build' | 'extract' | 'collect' | null;
+  scanning: boolean;
+  loadingExtraction: boolean;
+  extraction: ExtractionStatus | null;
+  scan: GeologyScanResponse | null;
+  inventory: InventoryItem[];
+  depositsInSelectedCell: number;
+  onClaim: () => void;
+  onBuild: () => void;
+  onScan: () => void;
+  onCollect: () => void;
+  onStartExtraction: (depositId: string) => void;
+}) {
+  return (
+    <>
+      <View style={styles.rowBetween}>
+        <View style={styles.flex}>
+          <Text style={styles.eyebrow}>ТЕРРИТОРИЯ</Text>
+          <Text style={styles.cellTitle} numberOfLines={1}>{selectedCell?.h3Index ?? 'Выберите ячейку'}</Text>
+        </View>
+        <View style={[styles.badge, selectedCell?.occupied ? styles.badgeBusy : styles.badgeFree]}>
+          <Text style={styles.badgeText}>{selectedCell?.occupied ? 'ЗАНЯТО' : 'СВОБОДНО'}</Text>
+        </View>
+      </View>
+
+      {selectedCell?.building ? (
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}>{selectedCell.building.name ?? selectedCell.building.code}</Text>
+          <Text style={styles.infoText}>Уровень: {selectedCell.building.level ?? 1}</Text>
+          <Text style={styles.infoText}>Владелец: {selectedCell.claim?.ownerName ?? 'неизвестно'}</Text>
+          <Text style={styles.infoText}>Статус: {selectedCell.building.status ?? '—'}</Text>
+        </View>
+      ) : selectedCell?.claim ? (
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}>{ownedByPlayer ? 'Участок вашей компании' : 'Чужая территория'}</Text>
+          <Text style={styles.infoText}>Владелец: {selectedCell.claim.ownerName ?? 'неизвестно'}</Text>
+        </View>
+      ) : (
+        <Text style={styles.infoText}>Свободный участок. Его можно исследовать и арендовать.</Text>
+      )}
+
+      {selectedCell && !selectedCell.claim ? (
+        <ActionButton
+          busy={action === 'claim'}
+          disabled={action !== null}
+          label="АРЕНДОВАТЬ УЧАСТОК · 5 000 ₡"
+          onPress={onClaim}
+        />
+      ) : null}
+
+      {selectedCell && ownedByPlayer && !selectedCell.building ? (
+        <ActionButton
+          busy={action === 'build'}
+          disabled={action !== null}
+          label="ПОСТРОИТЬ ШАХТУ · 10 000 ₡"
+          onPress={onBuild}
+        />
+      ) : null}
+
+      <ActionButton
+        busy={scanning}
+        disabled={scanning || !selectedCell || action !== null}
+        label="ПРОВЕСТИ ГЕОРАЗВЕДКУ"
+        onPress={onScan}
+      />
+
+      {loadingExtraction ? (
+        <View style={styles.inlineLoading}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.infoText}>Проверка добычи…</Text>
+        </View>
+      ) : null}
+
+      {ownedByPlayer && isExtractionBuilding && extraction ? (
+        <View style={styles.productionCard}>
+          <View style={styles.rowBetween}>
+            <View style={styles.flex}>
+              <Text style={styles.eyebrow}>ДОБЫЧА</Text>
+              <Text style={styles.infoTitle}>{extraction.deposit.resource.name}</Text>
+            </View>
+            <Text style={styles.productionRate}>{formatNumber(extraction.ratePerHour, 2)} {extraction.deposit.resource.unit}/ч</Text>
+          </View>
+          <Text style={styles.infoText}>Накоплено: {formatNumber(extraction.availableToCollect, 2)} {extraction.deposit.resource.unit}</Text>
+          <Text style={styles.infoText}>Остаток месторождения: {formatNumber(extraction.deposit.quantityRemaining, 2)} {extraction.deposit.resource.unit}</Text>
+          <ActionButton
+            busy={action === 'collect'}
+            disabled={action !== null || extraction.availableToCollect <= 0}
+            label={`ЗАБРАТЬ · ${formatNumber(extraction.availableToCollect, 2)} ${extraction.deposit.resource.unit}`}
+            onPress={onCollect}
+          />
+        </View>
+      ) : null}
+
+      {scan ? (
+        <View style={styles.scanResults}>
+          <View style={styles.statsRow}>
+            <Stat value={`${scan.capabilities.maxDepthMeters} м`} label="глубина" />
+            <Stat value={`${scan.capabilities.rangeMeters} м`} label="дальность" />
+            <Stat value={`${Math.round(scan.capabilities.confidence * 100)}%`} label="точность" />
+          </View>
+          <Text style={styles.scanId}>Отчёт: {scan.scanId.slice(0, 8)}</Text>
+
+          {scan.deposits.length ? scan.deposits.map((deposit) => {
+            const canStartHere = ownedByPlayer
+              && isExtractionBuilding
+              && !extraction
+              && deposit.h3Index === selectedCell?.h3Index;
+
+            return (
+              <View key={deposit.id} style={styles.depositCard}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.depositName}>{deposit.resource.name}</Text>
+                  <Text style={styles.rarity}>R{deposit.resource.rarity}</Text>
+                </View>
+                <Text style={styles.depositText}>Запасы: {formatNumber(deposit.estimates.quantity.min)}–{formatNumber(deposit.estimates.quantity.max)} {deposit.resource.unit}</Text>
+                <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters)}–{formatNumber(deposit.estimates.depthToMeters)} м</Text>
+                {canStartHere ? (
+                  <ActionButton
+                    busy={action === 'extract'}
+                    disabled={action !== null}
+                    label={`НАЧАТЬ ДОБЫЧУ · ${deposit.resource.name.toUpperCase()}`}
+                    onPress={() => onStartExtraction(deposit.id)}
+                  />
+                ) : null}
+              </View>
+            );
+          }) : <Text style={styles.emptyText}>Доступных вашему уровню геологии залежей не найдено.</Text>}
+
+          {!extraction && ownedByPlayer && isExtractionBuilding && depositsInSelectedCell === 0 ? (
+            <Text style={styles.emptyText}>Для запуска добычи сначала найдите залежь именно в ячейке этого объекта.</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {inventory.length ? (
+        <View style={styles.inventoryBox}>
+          <Text style={styles.eyebrow}>СКЛАД КОМПАНИИ</Text>
+          {inventory.map((item) => (
+            <View key={item.resourceId} style={styles.inventoryRow}>
+              <Text style={styles.inventoryName}>{item.name}</Text>
+              <Text style={styles.inventoryValue}>{formatNumber(item.quantity, 2)} {item.unit}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 function Legend({ dotStyle, label }: { dotStyle: object; label: string }) {
-  return <View style={styles.legendItem}><View style={[styles.legendDot, dotStyle]} /><Text style={styles.legendText}>{label}</Text></View>;
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, dotStyle]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
 }
 
 function Stat({ value, label }: { value: string; label: string }) {
-  return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>;
+  return (
+    <View style={styles.stat}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
 }
 
 function ActionButton({
@@ -518,9 +604,12 @@ const styles = StyleSheet.create({
   map: { ...absolute },
   overlay: { ...absolute, paddingHorizontal: 14, paddingTop: 8 },
   flex: { flex: 1 },
-  topCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(10,15,22,0.92)', borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11 },
+  topCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 9, backgroundColor: 'rgba(10,15,22,0.92)', borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11 },
   brand: { color: '#f5c451', fontWeight: '900', fontSize: 18, letterSpacing: 1.6 },
-  status: { color: '#c7ced8', fontSize: 11, marginTop: 3, maxWidth: 280 },
+  status: { color: '#c7ced8', fontSize: 11, marginTop: 3, maxWidth: 250 },
+  geologyButton: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 9, borderWidth: 1, borderColor: 'rgba(245,196,81,0.4)', backgroundColor: 'rgba(245,196,81,0.08)' },
+  geologyButtonActive: { backgroundColor: 'rgba(121,199,255,0.14)', borderColor: 'rgba(121,199,255,0.5)' },
+  geologyButtonText: { color: '#f4e8c8', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
   legend: { alignSelf: 'flex-start', flexDirection: 'row', gap: 10, marginTop: 8, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(10,15,22,0.88)' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
@@ -530,6 +619,7 @@ const styles = StyleSheet.create({
   legendText: { color: '#d7dce3', fontSize: 10 },
   spacer: { flex: 1 },
   bottomCard: { maxHeight: '58%', marginBottom: 8, overflow: 'hidden', backgroundColor: 'rgba(10,15,22,0.96)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(242,209,139,0.28)' },
+  bottomCardTall: { maxHeight: '72%' },
   scroll: { flexGrow: 0 },
   scrollContent: { padding: 16 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
