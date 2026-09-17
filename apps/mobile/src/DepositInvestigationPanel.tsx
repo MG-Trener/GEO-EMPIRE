@@ -157,6 +157,7 @@ export function DepositInvestigationPanel({
   if (!state) return null;
 
   const confidencePercent = Math.round(state.estimates.confidence * 100);
+  const nextStudy = state.nextStudy;
 
   return (
     <View style={styles.card}>
@@ -219,21 +220,21 @@ export function DepositInvestigationPanel({
             {secondsRemaining > 0 ? `Осталось ${formatDuration(secondsRemaining)}` : 'Обработка результатов…'}
           </Text>
         </View>
-      ) : state.nextStudy ? (
+      ) : nextStudy ? (
         <View style={styles.nextBox}>
           <Text style={styles.nextLabel}>СЛЕДУЮЩИЙ ЭТАП</Text>
-          <Text style={styles.nextTitle}>{state.nextStudy.name}</Text>
-          <Text style={styles.description}>{state.nextStudy.description}</Text>
+          <Text style={styles.nextTitle}>{nextStudy.name}</Text>
+          <Text style={styles.description}>{nextStudy.description}</Text>
           <View style={styles.rowBetween}>
-            <Text style={styles.price}>{formatNumber(state.nextStudy.cost)} ₡</Text>
-            <Text style={styles.duration}>{formatDuration(state.nextStudy.durationSeconds)}</Text>
+            <Text style={styles.price}>{formatNumber(nextStudy.cost)} ₡</Text>
+            <Text style={styles.duration}>{formatDuration(nextStudy.durationSeconds)}</Text>
           </View>
           <Pressable
-            disabled={starting || state.wallet.soft < state.nextStudy.cost}
+            disabled={starting || state.wallet.soft < nextStudy.cost}
             onPress={() => void startNext()}
             style={({ pressed }) => [
               styles.button,
-              (starting || state.wallet.soft < state.nextStudy.cost) && styles.buttonDisabled,
+              (starting || state.wallet.soft < nextStudy.cost) && styles.buttonDisabled,
               pressed && styles.buttonPressed,
             ]}
           >
@@ -241,7 +242,7 @@ export function DepositInvestigationPanel({
               ? <ActivityIndicator color="#11161d" />
               : <Text style={styles.buttonText}>НАЧАТЬ ИССЛЕДОВАНИЕ</Text>}
           </Pressable>
-          {state.wallet.soft < state.nextStudy.cost ? (
+          {state.wallet.soft < nextStudy.cost ? (
             <Text style={styles.warning}>Недостаточно средств. Баланс: {formatNumber(state.wallet.soft)} ₡</Text>
           ) : null}
         </View>
