@@ -28,18 +28,46 @@ export async function locateWorld(lat: number, lng: number, ring = 2): Promise<L
   return requestJson<LocateResponse>(`${API_URL}/api/v1/world/locate?${params.toString()}`);
 }
 
-export async function previewGeology(input: {
+export async function runGeologyScan(input: {
   playerId: string;
   playerLat: number;
   playerLng: number;
   targetLat: number;
   targetLng: number;
-}): Promise<GeologyPreviewResponse> {
-  return requestJson<GeologyPreviewResponse>(`${API_URL}/api/v1/geology/preview`, {
+}): Promise<GeologyPreviewResponse & { scanId: string }> {
+  return requestJson<GeologyPreviewResponse & { scanId: string }>(`${API_URL}/api/v1/geology/scan`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function claimTerritory(input: {
+  playerId: string;
+  playerLat: number;
+  playerLng: number;
+  h3Index: string;
+}): Promise<{ status: string; h3Index: string; leaseUntil: string; charged: number; balance?: number }> {
+  return requestJson(`${API_URL}/api/v1/territories/claim`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function constructBuilding(input: {
+  playerId: string;
+  h3Index: string;
+  buildingCode: string;
+}): Promise<{
+  status: string;
+  building: { id: string; code: string; name: string; h3Index: string; completesAt: string };
+  charged: number;
+  balance: number;
+}> {
+  return requestJson(`${API_URL}/api/v1/buildings/construct`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
 }
