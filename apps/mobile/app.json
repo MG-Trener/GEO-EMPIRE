@@ -2,10 +2,12 @@
   "expo": {
     "name": "GEO EMPIRE",
     "slug": "geo-empire",
+    "scheme": "geoempire",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "backgroundColor": "#0a0f16",
     "plugins": [
       "@maplibre/maplibre-react-native",
       [
@@ -16,13 +18,17 @@
       ]
     ],
     "android": {
+      "package": "kz.geoempire.game",
+      "versionCode": 1,
+      "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ]
     },
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "kz.geoempire.game",
+      "supportsTablet": false
     }
   }
 }
