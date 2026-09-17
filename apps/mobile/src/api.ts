@@ -1,4 +1,4 @@
-import type { GeologyScanResponse, LocateResponse } from './types';
+import type { GeologyScanResponse, LocateResponse, PlayerSummary } from './types';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
 
@@ -26,6 +26,10 @@ export async function locateWorld(lat: number, lng: number, ring = 2): Promise<L
   });
 
   return requestJson<LocateResponse>(`${API_URL}/api/v1/world/locate?${params.toString()}`);
+}
+
+export async function getPlayerSummary(playerId = DEMO_PLAYER_ID): Promise<PlayerSummary> {
+  return requestJson<PlayerSummary>(`${API_URL}/api/v1/players/${encodeURIComponent(playerId)}/summary`);
 }
 
 export async function runGeologyScan(input: {
