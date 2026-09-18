@@ -366,7 +366,7 @@ export default function AppFirstMiningLoop() {
   );
 
   const allVisibleDeposits = useMemo(() => {
-    const merged = new Map<string, ScanDeposit>();
+    const merged = new globalThis.Map<string, ScanDeposit>();
     for (const deposit of knownDeposits) merged.set(deposit.id, knownToScanDeposit(deposit));
     for (const deposit of scan?.deposits ?? []) merged.set(deposit.id, deposit);
     return [...merged.values()];

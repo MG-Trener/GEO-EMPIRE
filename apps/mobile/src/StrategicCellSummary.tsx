@@ -14,8 +14,8 @@ type Props = {
   onScan: () => void;
   onClaim: () => void;
   onDevelop: () => void;
-  onCollect: () => void;
-  onStartExtraction: (depositId: string) => void;
+  onCollect?: () => void;
+  onStartExtraction?: (depositId: string) => void;
   onExpand: () => void;
 };
 
@@ -184,7 +184,7 @@ export function StrategicCellSummary({
       source: gameAssets.actions.collect,
       accent: 'green',
       disabled: busy || liveExtraction.available <= 0.001,
-      onPress: onCollect,
+      onPress: onCollect ?? onExpand,
     };
   } else if (canStartExtraction && primaryDeposit) {
     primaryAction = {
@@ -192,7 +192,7 @@ export function StrategicCellSummary({
       source: gameAssets.actions.extract,
       accent: 'green',
       disabled: busy,
-      onPress: () => onStartExtraction(primaryDeposit.id),
+      onPress: () => onStartExtraction?.(primaryDeposit.id),
     };
   } else if (canDevelop) {
     primaryAction = {
