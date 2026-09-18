@@ -15,7 +15,7 @@ export function GameSettingsPanel({ visible, settings, onChange, onReset, onClos
   return (
     <Modal visible={visible} animationType="fade" transparent statusBarTranslucent={false} onRequestClose={onClose}>
       <SafeAreaView style={styles.backdrop} edges={['top', 'bottom']}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={styles.card}>
           <View style={styles.header}>
             <Image source={gameAssets.nav.settings} style={styles.headerIcon} resizeMode="contain" />
