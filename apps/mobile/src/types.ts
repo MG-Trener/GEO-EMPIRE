@@ -14,6 +14,8 @@ export type WorldCell = {
     name: string | null;
     level: number | null;
     status: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
   };
 };
 
