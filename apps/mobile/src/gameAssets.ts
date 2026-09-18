@@ -70,6 +70,10 @@ export const gameAssets = {
     rareEarths: require('../assets/images/sheet_ru_1/sheet_ru_1_element_025.png'),
     strategic: require('../assets/images/sheet_ru_1/sheet_ru_1_element_026.png'),
   },
+  splash: {
+    start: require('../assets/images/splash/geo-empire-start.jpg'),
+    promo: require('../assets/images/splash/geo-empire-promo.jpg'),
+  },
 } as const;
 
 export function resourceIconForCode(code?: string | null): ImageSourcePropType {
