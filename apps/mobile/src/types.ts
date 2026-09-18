@@ -141,6 +141,82 @@ export type GeologyScanResponse = {
   }>;
 };
 
+export type KnownDeposit = {
+  id: string;
+  h3Index: string;
+  resource: GeologyDeposit['resource'];
+  confidence: number;
+  estimatedQuantity: { min: number; max: number };
+  estimates: {
+    depthFromMeters: number;
+    depthToMeters: number;
+    density: { min: number; max: number; value: number };
+    confidence: number;
+  };
+  updatedAt: string;
+};
+
+export type KnownDepositsResponse = {
+  playerId: string;
+  deposits: KnownDeposit[];
+};
+
+export type TechnologyCategory = 'production' | 'economy' | 'logistics';
+export type IndustrialTechnologyKey =
+  | 'extraction_automation'
+  | 'mine_mechanization'
+  | 'well_optimization'
+  | 'predictive_maintenance'
+  | 'commodity_trading'
+  | 'land_management'
+  | 'warehouse_network'
+  | 'heavy_haul'
+  | 'pipeline_network'
+  | 'fuel_logistics';
+
+export type TechnologyModifiers = {
+  productionMultiplier: number;
+  mineProductionMultiplier: number;
+  wellProductionMultiplier: number;
+  extractionOpexMultiplier: number;
+  marketPriceMultiplier: number;
+  claimCostMultiplier: number;
+  bufferHoursBonus: number;
+};
+
+export type TechnologyOption = {
+  key: IndustrialTechnologyKey;
+  category: TechnologyCategory;
+  title: string;
+  description: string;
+  effect: string;
+  currentLevel: number;
+  nextLevel: number | null;
+  maxed: boolean;
+  priceSoft: number | null;
+  effectUnit: 'percent' | 'hours';
+  currentEffect: number;
+  nextEffect: number | null;
+};
+
+export type TechnologyCatalog = {
+  playerId: string;
+  wallet: { soft: number; premium: number };
+  modifiers: TechnologyModifiers;
+  technologies: TechnologyOption[];
+};
+
+export type TechnologyUpgradeResponse = {
+  status: 'upgraded';
+  playerId: string;
+  techKey: IndustrialTechnologyKey;
+  level: number;
+  charged: number;
+  wallet: { soft: number; premium: number };
+  effect: { label: string; unit: 'percent' | 'hours'; value: number };
+  modifiers: TechnologyModifiers;
+};
+
 export type ExtractionResource = {
   code: string;
   name: string;
