@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { getKnownDeposits } from './api';
 import { resourceIconForCode } from './gameAssets';
-import type { GeologyScanResponse } from './types';
+import type { GeologyScanResponse, KnownDeposit } from './types';
 
 type ResourceOption = {
   code: string;
@@ -20,10 +21,20 @@ export function HeatmapResourceSelector({
   selectedCode: string | null;
   onSelect: (resourceCode: string) => void;
 }) {
+  const [knownDeposits, setKnownDeposits] = useState<KnownDeposit[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getKnownDeposits()
+      .then((result) => { if (!cancelled) setKnownDeposits(result.deposits); })
+      .catch(() => { if (!cancelled) setKnownDeposits([]); });
+    return () => { cancelled = true; };
+  }, [scan?.scanId]);
+
   const options = useMemo(() => {
     const map = new Map<string, ResourceOption & { cellIds: Set<string> }>();
 
-    for (const deposit of scan?.deposits ?? []) {
+    const add = (deposit: { resource: { code: string; name: string; rarity: number }; h3Index: string; density: number }) => {
       const existing = map.get(deposit.resource.code) ?? {
         code: deposit.resource.code,
         name: deposit.resource.name,
@@ -32,18 +43,31 @@ export function HeatmapResourceSelector({
         rarity: 1,
         cellIds: new Set<string>(),
       };
-
       existing.cellIds.add(deposit.h3Index);
       existing.cells = existing.cellIds.size;
-      existing.maxDensity = Math.max(existing.maxDensity, Number(deposit.estimates.density?.value ?? 0));
+      existing.maxDensity = Math.max(existing.maxDensity, Number(deposit.density ?? 0));
       existing.rarity = Math.max(existing.rarity, Number(deposit.resource.rarity ?? 1));
       map.set(deposit.resource.code, existing);
+    };
+
+    for (const deposit of knownDeposits) {
+      add({ resource: deposit.resource, h3Index: deposit.h3Index, density: deposit.estimates.density.value });
+    }
+    for (const deposit of scan?.deposits ?? []) {
+      add({ resource: deposit.resource, h3Index: deposit.h3Index, density: deposit.estimates.density?.value ?? 0 });
     }
 
     return [...map.values()]
       .map(({ cellIds: _cellIds, ...option }) => option)
-      .sort((a, b) => b.maxDensity - a.maxDensity || b.rarity - a.rarity);
-  }, [scan]);
+      .sort((a, b) => b.maxDensity - a.maxDensity || b.rarity - a.rarity || a.name.localeCompare(b.name, 'ru'));
+  }, [knownDeposits, scan]);
+
+  useEffect(() => {
+    if (!options.length) return;
+    if (!selectedCode || !options.some((option) => option.code === selectedCode)) {
+      onSelect(options[0].code);
+    }
+  }, [onSelect, options, selectedCode]);
 
   if (!options.length) return null;
 
@@ -52,28 +76,30 @@ export function HeatmapResourceSelector({
   return (
     <View style={styles.root}>
       <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.label}>КАРТА МЕСТОРОЖДЕНИЙ</Text>
-          <Text style={styles.summary}>
+        <View style={styles.headerText}>
+          <Text style={styles.label}>ТЕПЛОВАЯ КАРТА МЕСТОРОЖДЕНИЙ</Text>
+          <Text style={styles.summary} numberOfLines={1}>
             {active.name} · {active.cells} яч. · пик {Math.round(active.maxDensity * 100)}% · R{active.rarity}
           </Text>
         </View>
         <View style={styles.legend}>
-          <View style={[styles.legendDot, styles.legendCommon]} />
-          <Text style={styles.legendText}>R1-2</Text>
-          <View style={[styles.legendDot, styles.legendRare]} />
-          <Text style={styles.legendText}>R3-4</Text>
-          <View style={[styles.legendDot, styles.legendStrategic]} />
-          <Text style={styles.legendText}>R5+</Text>
+          <View style={[styles.heatDot, styles.heatLow]} />
+          <Text style={styles.legendText}>низ.</Text>
+          <View style={[styles.heatDot, styles.heatMedium]} />
+          <Text style={styles.legendText}>сред.</Text>
+          <View style={[styles.heatDot, styles.heatHigh]} />
+          <Text style={styles.legendText}>выс.</Text>
         </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.list}>
         {options.map((option) => {
-          const isActive = option.code === selectedCode;
+          const isActive = option.code === active.code;
           return (
             <Pressable
               key={option.code}
+              accessibilityRole="button"
+              accessibilityLabel={`Показать тепловую карту ресурса ${option.name}`}
               onPress={() => onSelect(option.code)}
               style={({ pressed }) => [styles.item, isActive && styles.itemActive, pressed && styles.pressed]}
             >
@@ -110,15 +136,16 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(73,195,218,0.24)',
     overflow: 'hidden',
   },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  label: { color: '#84dff0', fontSize: 6.7, fontWeight: '900', letterSpacing: 0.9 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 7 },
+  headerText: { flex: 1, minWidth: 0 },
+  label: { color: '#84dff0', fontSize: 6.7, fontWeight: '900', letterSpacing: 0.8 },
   summary: { color: '#8ca4af', fontSize: 6.7, fontWeight: '700', marginTop: 2 },
-  legend: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  legendDot: { width: 6, height: 6, borderRadius: 6 },
-  legendCommon: { backgroundColor: '#38d8ff' },
-  legendRare: { backgroundColor: '#f4bd42' },
-  legendStrategic: { backgroundColor: '#b96cff' },
-  legendText: { color: '#708792', fontSize: 5.7, fontWeight: '800' },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  heatDot: { width: 7, height: 7, borderRadius: 7 },
+  heatLow: { backgroundColor: '#23d7ff' },
+  heatMedium: { backgroundColor: '#f4da4b' },
+  heatHigh: { backgroundColor: '#e73e33' },
+  legendText: { color: '#708792', fontSize: 5.3, fontWeight: '800' },
   list: { gap: 4, paddingTop: 5, paddingRight: 2 },
   item: {
     height: 34,
