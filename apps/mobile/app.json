@@ -3,7 +3,7 @@
     "name": "GEO EMPIRE",
     "slug": "geo-empire",
     "scheme": "geoempire",
-    "version": "0.1.1",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -19,10 +19,11 @@
     ],
     "android": {
       "package": "kz.geoempire.game",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "REQUEST_INSTALL_PACKAGES"
       ]
     },
     "ios": {
