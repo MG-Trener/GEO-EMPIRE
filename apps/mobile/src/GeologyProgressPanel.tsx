@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  type ImageSourcePropType,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { getGeologyUpgrades, upgradeGeology } from './api';
+import { gameAssets } from './gameAssets';
 import { KnownDepositsPanel } from './KnownDepositsPanel';
 import { MarketPanel } from './MarketPanel';
 import { StorePanel } from './StorePanel';
@@ -10,12 +19,32 @@ type Props = {
   onMessage?: (message: string) => void;
 };
 
-const skillLabels: Record<GeologySkillKey, { title: string; description: string }> = {
-  range: { title: 'Дальность', description: 'Как далеко можно исследовать от текущей позиции.' },
-  coverage: { title: 'Площадь разведки', description: 'Сколько соседних H3-ячеек попадает в один проход.' },
-  depth: { title: 'Глубина', description: 'Максимальная глубина обнаруживаемых залежей.' },
-  accuracy: { title: 'Точность', description: 'Сужает погрешность оценки объёма, глубины и качества.' },
-  sensitivity: { title: 'Чувствительность', description: 'Позволяет замечать более редкие типы ресурсов.' },
+const skillLabels: Record<GeologySkillKey, { title: string; description: string; icon: ImageSourcePropType }> = {
+  range: {
+    title: 'Дальность',
+    description: 'Как далеко можно исследовать от текущей позиции.',
+    icon: gameAssets.utility.measure,
+  },
+  coverage: {
+    title: 'Площадь разведки',
+    description: 'Сколько соседних H3-ячеек попадает в один проход.',
+    icon: gameAssets.utility.territories,
+  },
+  depth: {
+    title: 'Глубина',
+    description: 'Максимальная глубина обнаруживаемых залежей.',
+    icon: gameAssets.mapModes.terrain,
+  },
+  accuracy: {
+    title: 'Точность',
+    description: 'Сужает погрешность оценки объёма, глубины и качества.',
+    icon: gameAssets.utility.center,
+  },
+  sensitivity: {
+    title: 'Чувствительность',
+    description: 'Позволяет замечать более редкие типы ресурсов.',
+    icon: gameAssets.mapModes.resources,
+  },
 };
 
 function formatValue(option: GeologyUpgradeOption, value: number | null): string {
@@ -65,30 +94,30 @@ export function GeologyProgressPanel({ onMessage }: Props) {
   return (
     <View style={styles.panel}>
       <View style={styles.tabs}>
-        <Pressable
+        <SectionTab
+          label="ТЕХНОЛОГИИ"
+          source={gameAssets.nav.technologies}
+          active={section === 'geology'}
           onPress={() => setSection('geology')}
-          style={[styles.tab, section === 'geology' && styles.tabActive]}
-        >
-          <Text style={[styles.tabText, section === 'geology' && styles.tabTextActive]}>ТЕХНОЛОГИИ</Text>
-        </Pressable>
-        <Pressable
+        />
+        <SectionTab
+          label="ЗАЛЕЖИ"
+          source={gameAssets.mapModes.resources}
+          active={section === 'deposits'}
           onPress={() => setSection('deposits')}
-          style={[styles.tab, section === 'deposits' && styles.tabDepositsActive]}
-        >
-          <Text style={[styles.tabText, section === 'deposits' && styles.tabTextActive]}>ЗАЛЕЖИ</Text>
-        </Pressable>
-        <Pressable
+        />
+        <SectionTab
+          label="РЫНОК"
+          source={gameAssets.nav.trade}
+          active={section === 'market'}
           onPress={() => setSection('market')}
-          style={[styles.tab, section === 'market' && styles.tabMarketActive]}
-        >
-          <Text style={[styles.tabText, section === 'market' && styles.tabTextActive]}>РЫНОК</Text>
-        </Pressable>
-        <Pressable
+        />
+        <SectionTab
+          label="МАГАЗИН"
+          source={gameAssets.resources.gold}
+          active={section === 'store'}
           onPress={() => setSection('store')}
-          style={[styles.tab, section === 'store' && styles.tabStoreActive]}
-        >
-          <Text style={[styles.tabText, section === 'store' && styles.tabTextActive]}>МАГАЗИН</Text>
-        </Pressable>
+        />
       </View>
 
       {section === 'deposits' ? (
@@ -105,15 +134,18 @@ export function GeologyProgressPanel({ onMessage }: Props) {
         />
       ) : loading && !catalog ? (
         <View style={styles.loadingBox}>
-          <ActivityIndicator />
+          <ActivityIndicator color="#38d8ff" />
           <Text style={styles.muted}>Загрузка геологических технологий…</Text>
         </View>
       ) : catalog ? (
         <>
           <View style={styles.headerRow}>
-            <View>
-              <Text style={styles.eyebrow}>ГЕОЛОГИЧЕСКАЯ СЛУЖБА</Text>
-              <Text style={styles.title}>Технологии разведки</Text>
+            <View style={styles.headerIdentity}>
+              <Image source={gameAssets.nav.exploration} style={styles.headerIcon} resizeMode="contain" />
+              <View style={styles.headerText}>
+                <Text style={styles.eyebrow}>ГЕОЛОГИЧЕСКАЯ СЛУЖБА</Text>
+                <Text style={styles.title}>Технологии разведки</Text>
+              </View>
             </View>
             <View style={styles.wallet}>
               <Text style={styles.walletSoft}>{catalog.wallet.soft.toLocaleString('ru-RU')} ₡</Text>
@@ -130,17 +162,26 @@ export function GeologyProgressPanel({ onMessage }: Props) {
             return (
               <View key={option.skill} style={styles.skillCard}>
                 <View style={styles.skillHeader}>
+                  <Image source={meta.icon} style={styles.skillIcon} resizeMode="contain" />
                   <View style={styles.skillText}>
-                    <Text style={styles.skillTitle}>{meta.title}</Text>
+                    <View style={styles.skillTitleRow}>
+                      <Text style={styles.skillTitle}>{meta.title}</Text>
+                      <Text style={styles.level}>LV {option.currentLevel}/10</Text>
+                    </View>
                     <Text style={styles.description}>{meta.description}</Text>
                   </View>
-                  <Text style={styles.level}>LV {option.currentLevel}/10</Text>
                 </View>
 
                 <View style={styles.valueRow}>
-                  <Text style={styles.currentValue}>{formatValue(option, option.currentValue)}</Text>
+                  <View style={styles.valuePill}>
+                    <Text style={styles.valueLabel}>СЕЙЧАС</Text>
+                    <Text style={styles.currentValue}>{formatValue(option, option.currentValue)}</Text>
+                  </View>
                   <Text style={styles.arrow}>→</Text>
-                  <Text style={styles.nextValue}>{formatValue(option, option.nextValue)}</Text>
+                  <View style={[styles.valuePill, styles.valuePillNext]}>
+                    <Text style={styles.valueLabel}>СЛЕДУЮЩИЙ</Text>
+                    <Text style={styles.nextValue}>{formatValue(option, option.nextValue)}</Text>
+                  </View>
                 </View>
 
                 {option.maxed ? (
@@ -175,6 +216,28 @@ export function GeologyProgressPanel({ onMessage }: Props) {
   );
 }
 
+function SectionTab({
+  label,
+  source,
+  active,
+  onPress,
+}: {
+  label: string;
+  source: ImageSourcePropType;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.tab, active && styles.tabActive, pressed && styles.pressed]}
+    >
+      <Image source={source} style={styles.tabIcon} resizeMode="contain" />
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function UpgradeButton({
   disabled,
   busy,
@@ -199,45 +262,105 @@ function UpgradeButton({
         pressed && styles.pressed,
       ]}
     >
-      {busy ? <ActivityIndicator size="small" /> : <Text style={styles.buttonText}>{label}</Text>}
+      {busy ? <ActivityIndicator size="small" color="#ffffff" /> : (
+        <View style={styles.upgradeContent}>
+          <Image source={gameAssets.utility.upgrade} style={styles.upgradeIcon} resizeMode="contain" />
+          <Text style={styles.buttonText}>{label}</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  panel: { marginTop: 14, gap: 9 },
-  tabs: { flexDirection: 'row', gap: 5, padding: 3, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
-  tab: { flex: 1, minHeight: 34, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
-  tabActive: { backgroundColor: 'rgba(245,196,81,0.16)' },
-  tabDepositsActive: { backgroundColor: 'rgba(105,169,149,0.17)' },
-  tabMarketActive: { backgroundColor: 'rgba(119,217,189,0.14)' },
-  tabStoreActive: { backgroundColor: 'rgba(184,138,221,0.16)' },
-  tabText: { color: '#7f8997', fontSize: 7, fontWeight: '900', letterSpacing: 0.45 },
-  tabTextActive: { color: '#f3f4f6' },
+  panel: { marginTop: 5, gap: 9 },
+  tabs: {
+    flexDirection: 'row',
+    gap: 5,
+    padding: 4,
+    borderRadius: 13,
+    backgroundColor: 'rgba(2,13,21,0.74)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.12)',
+  },
+  tab: {
+    flex: 1,
+    minHeight: 55,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  tabActive: {
+    backgroundColor: 'rgba(22,111,145,0.24)',
+    borderColor: 'rgba(56,216,255,0.52)',
+  },
+  tabIcon: { width: 43, height: 35 },
+  tabText: { color: '#7891a1', fontSize: 6, fontWeight: '900', letterSpacing: 0.35, marginTop: -2 },
+  tabTextActive: { color: '#eaf9ff' },
   loadingBox: { padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
-  eyebrow: { color: '#8d99a8', fontSize: 10, letterSpacing: 1.4, fontWeight: '700' },
-  title: { color: '#f6f7f9', fontSize: 16, fontWeight: '900', marginTop: 3 },
-  wallet: { alignItems: 'flex-end' },
-  walletSoft: { color: '#f5c451', fontSize: 12, fontWeight: '900' },
-  walletPremium: { color: '#79c7ff', fontSize: 11, fontWeight: '900', marginTop: 3 },
-  skillCard: { padding: 11, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.045)', borderWidth: 1, borderColor: 'rgba(242,209,139,0.15)' },
-  skillHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  headerIdentity: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerIcon: { width: 58, height: 52, borderRadius: 10 },
+  headerText: { flex: 1 },
+  eyebrow: { color: '#6d93aa', fontSize: 8, letterSpacing: 1.2, fontWeight: '800' },
+  title: { color: '#f3f9fc', fontSize: 15, fontWeight: '900', marginTop: 2 },
+  wallet: {
+    alignItems: 'flex-end',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+  },
+  walletSoft: { color: '#f5c451', fontSize: 11, fontWeight: '900' },
+  walletPremium: { color: '#38d8ff', fontSize: 10, fontWeight: '900', marginTop: 2 },
+  skillCard: {
+    padding: 10,
+    borderRadius: 13,
+    backgroundColor: 'rgba(5,25,36,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.16)',
+  },
+  skillHeader: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  skillIcon: { width: 52, height: 52, borderRadius: 11 },
   skillText: { flex: 1 },
-  skillTitle: { color: '#f5c451', fontSize: 13, fontWeight: '900' },
-  description: { color: '#9ba5b2', fontSize: 10, marginTop: 3, lineHeight: 14 },
-  level: { color: '#d7dce3', fontSize: 10, fontWeight: '900' },
-  valueRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 9 },
-  currentValue: { color: '#d7dce3', fontSize: 12, fontWeight: '800' },
-  arrow: { color: '#687586', fontSize: 12 },
-  nextValue: { color: '#77d9bd', fontSize: 12, fontWeight: '900' },
+  skillTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  skillTitle: { color: '#f3f8fb', fontSize: 12, fontWeight: '900' },
+  description: { color: '#91a6b3', fontSize: 9, marginTop: 3, lineHeight: 13 },
+  level: { color: '#f4c957', fontSize: 9, fontWeight: '900' },
+  valueRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 9 },
+  valuePill: {
+    flex: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+  },
+  valuePillNext: { backgroundColor: 'rgba(33,215,168,0.07)' },
+  valueLabel: { color: '#627b8c', fontSize: 6, fontWeight: '900', letterSpacing: 0.7 },
+  currentValue: { color: '#dce7ed', fontSize: 11, fontWeight: '800', marginTop: 2 },
+  arrow: { color: '#38d8ff', fontSize: 13 },
+  nextValue: { color: '#47e5bc', fontSize: 11, fontWeight: '900', marginTop: 2 },
   buttonRow: { flexDirection: 'row', gap: 8, marginTop: 9 },
-  button: { flex: 1, minHeight: 36, borderRadius: 9, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5c451' },
-  buttonPremium: { backgroundColor: '#79c7ff' },
-  buttonText: { color: '#11161d', fontSize: 10, fontWeight: '900' },
-  disabled: { opacity: 0.35 },
-  pressed: { opacity: 0.8 },
-  maxed: { color: '#77d9bd', fontSize: 10, fontWeight: '900', marginTop: 9 },
-  muted: { color: '#9ba5b2', fontSize: 11 },
-  note: { color: '#687586', fontSize: 9, lineHeight: 13 },
+  button: {
+    flex: 1,
+    minHeight: 39,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#4e350b',
+    borderWidth: 1,
+    borderColor: '#e4a93b',
+  },
+  buttonPremium: { backgroundColor: '#08394a', borderColor: '#38d8ff' },
+  upgradeContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  upgradeIcon: { width: 25, height: 25 },
+  buttonText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
+  disabled: { opacity: 0.34 },
+  pressed: { opacity: 0.75, transform: [{ scale: 0.98 }] },
+  maxed: { color: '#47e5bc', fontSize: 9, fontWeight: '900', marginTop: 9 },
+  muted: { color: '#91a5b2', fontSize: 10 },
+  note: { color: '#5e7483', fontSize: 8, lineHeight: 12 },
 });
