@@ -6,13 +6,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Application from 'expo-application';
 import App from '../App';
 import { AppUpdateBanner } from './AppUpdateBanner';
@@ -114,8 +114,8 @@ export function OnboardingGate() {
   return (
     <ImageBackground source={gameAssets.splash.start} style={styles.root} resizeMode="cover">
       <View style={styles.scrim} />
-      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
-      <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" translucent={false} backgroundColor="#071018" />
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.hero}>
             <View style={styles.heroBadge}>

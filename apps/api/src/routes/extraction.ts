@@ -520,19 +520,35 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
       resource_name: string;
       unit: string;
       quantity: string;
+      rate_per_hour: string;
       updated_at: string;
     }>(
       `
+        WITH inventory AS (
+          SELECT resource_id, quantity, updated_at
+          FROM player_inventory
+          WHERE player_id = $1
+        ),
+        production AS (
+          SELECT d.resource_id, sum(o.rate_per_hour)::numeric AS rate_per_hour
+          FROM extraction_operations o
+          JOIN buildings b ON b.id = o.building_id
+          JOIN resource_deposits d ON d.id = o.deposit_id
+          WHERE b.owner_player_id = $1 AND o.status = 'running'
+          GROUP BY d.resource_id
+        )
         SELECT
-          i.resource_id,
+          r.id AS resource_id,
           r.code AS resource_code,
           r.name_ru AS resource_name,
           r.unit,
-          i.quantity::text,
-          i.updated_at::text
-        FROM player_inventory i
-        JOIN resources r ON r.id = i.resource_id
-        WHERE i.player_id = $1 AND i.quantity > 0
+          coalesce(i.quantity, 0)::text AS quantity,
+          coalesce(p.rate_per_hour, 0)::text AS rate_per_hour,
+          coalesce(i.updated_at, now())::text AS updated_at
+        FROM resources r
+        LEFT JOIN inventory i ON i.resource_id = r.id
+        LEFT JOIN production p ON p.resource_id = r.id
+        WHERE coalesce(i.quantity, 0) > 0 OR coalesce(p.rate_per_hour, 0) > 0
         ORDER BY r.category, r.rarity, r.code
       `,
       [params.data.playerId],
@@ -544,6 +560,7 @@ export async function extractionRoutes(app: FastifyInstance): Promise<void> {
       name: row.resource_name,
       unit: row.unit,
       quantity: Number(row.quantity),
+      ratePerHour: Number(row.rate_per_hour),
       updatedAt: row.updated_at,
     }));
   });

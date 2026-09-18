@@ -22,10 +22,16 @@ if (typeof originalTextDecoder === 'function') {
   }
 }
 
+const React = require('react');
+const { SafeAreaProvider } = require('react-native-safe-area-context');
 const { OnboardingGate } = require('./src/OnboardingGate');
 
 if (restoreTextDecoder) {
   globalThis.TextDecoder = originalTextDecoder;
 }
 
-registerRootComponent(OnboardingGate);
+function Root() {
+  return React.createElement(SafeAreaProvider, null, React.createElement(OnboardingGate));
+}
+
+registerRootComponent(Root);

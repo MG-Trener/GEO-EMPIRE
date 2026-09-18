@@ -15,7 +15,8 @@
         {
           "locationWhenInUsePermission": "GEO EMPIRE использует геолокацию для исследования территории и взаимодействия с игровым миром."
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "android": {
       "package": "kz.geoempire.game",
