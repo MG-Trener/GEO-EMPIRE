@@ -15,8 +15,11 @@ import { MarketPanel } from './MarketPanel';
 import { StorePanel } from './StorePanel';
 import type { GeologySkillKey, GeologyUpgradeCatalog, GeologyUpgradeOption } from './types';
 
+export type GeoHubSection = 'geology' | 'deposits' | 'market' | 'store';
+
 type Props = {
   onMessage?: (message: string) => void;
+  initialSection?: GeoHubSection;
 };
 
 const skillLabels: Record<GeologySkillKey, { title: string; description: string; icon: ImageSourcePropType }> = {
@@ -55,11 +58,15 @@ function formatValue(option: GeologyUpgradeOption, value: number | null): string
   return `R${value}`;
 }
 
-export function GeologyProgressPanel({ onMessage }: Props) {
-  const [section, setSection] = useState<'geology' | 'deposits' | 'market' | 'store'>('geology');
+export function GeologyProgressPanel({ onMessage, initialSection = 'geology' }: Props) {
+  const [section, setSection] = useState<GeoHubSection>(initialSection);
   const [catalog, setCatalog] = useState<GeologyUpgradeCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<GeologySkillKey | null>(null);
+
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
