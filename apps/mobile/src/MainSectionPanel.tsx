@@ -8,20 +8,13 @@ export type { GameplaySection } from './MainSectionPanelLegacy';
 
 type Props = {
   section: GameplaySection;
-  preferredDepositId?: string | null;
   onMessage?: (message: string) => void;
 };
 
-export function MainSectionPanel({ section, preferredDepositId, onMessage }: Props) {
+export function MainSectionPanel({ section, onMessage }: Props) {
   if (section === 'technology') {
     return <TechnologyTreePanel onMessage={onMessage} />;
   }
 
-  return (
-    <LegacyMainSectionPanel
-      section={section}
-      preferredDepositId={preferredDepositId}
-      onMessage={onMessage}
-    />
-  );
+  return <LegacyMainSectionPanel section={section} onMessage={onMessage} />;
 }
