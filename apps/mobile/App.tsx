@@ -70,6 +70,30 @@ function formatNumber(value: number, maxDigits = 0): string {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: maxDigits }).format(value);
 }
 
+function scanDepositsToGeoJson(scan: GeologyScanResponse | null): FeatureCollection<Polygon> {
+  const seen = new Set<string>();
+  const deposits = scan?.deposits ?? [];
+  return {
+    type: 'FeatureCollection',
+    features: deposits.flatMap((deposit) => {
+      if (!deposit.h3Index || seen.has(deposit.h3Index)) return [];
+      seen.add(deposit.h3Index);
+      const boundary = cellToBoundary(deposit.h3Index, true) as [number, number][];
+      if (!boundary.length) return [];
+      return [{
+        type: 'Feature' as const,
+        id: `deposit-${deposit.h3Index}`,
+        properties: {
+          resourceCode: deposit.resource.code,
+          resourceName: deposit.resource.name,
+          rarity: deposit.resource.rarity,
+        },
+        geometry: { type: 'Polygon' as const, coordinates: [[...boundary, boundary[0]]] },
+      }];
+    }),
+  };
+}
+
 export default function App() {
   const [position, setPosition] = useState(ASTANA_DEMO);
   const [usingDemoPosition, setUsingDemoPosition] = useState(true);
@@ -82,6 +106,7 @@ export default function App() {
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [showGeology, setShowGeology] = useState(false);
+  const [showResourceOverlay, setShowResourceOverlay] = useState(true);
   const [hubSection, setHubSection] = useState<GeoHubSection>('geology');
   const [activeMainSection, setActiveMainSection] = useState<MainSection>('map');
   const [sheetExpanded, setSheetExpanded] = useState(false);
@@ -196,6 +221,10 @@ export default function App() {
     () => scan?.deposits.filter((deposit) => deposit.h3Index === selectedCell?.h3Index) ?? [],
     [scan, selectedCell],
   );
+  const discoveredDepositsGeoJson = useMemo(
+    () => showResourceOverlay ? scanDepositsToGeoJson(scan) : ({ type: 'FeatureCollection', features: [] } as FeatureCollection<Polygon>),
+    [scan, showResourceOverlay],
+  );
 
   const runScan = useCallback(async () => {
     if (!selectedCell) return;
@@ -210,6 +239,7 @@ export default function App() {
         targetLng: selectedCell.center.lng,
       });
       setScan(result);
+      setShowResourceOverlay(true);
       setSheetExpanded(true);
       setMessage(result.deposits.length
         ? `Разведка сохранена · обнаружено залежей: ${result.deposits.length}`
@@ -333,7 +363,6 @@ export default function App() {
             const cell = world?.cells.find((item) => item.h3Index === h3Index) ?? null;
             if (cell) {
               setSelectedCell(cell);
-              setScan(null);
               setShowGeology(false);
               setActiveMainSection('map');
               setSheetExpanded(false);
@@ -360,6 +389,37 @@ export default function App() {
               'line-color': ['case', ['==', ['get', 'selected'], 1], '#ffd76a', '#48e2c0'],
               'line-width': ['case', ['==', ['get', 'selected'], 1], 3.2, 1.1],
               'line-opacity': 0.92,
+            } as never}
+          />
+        </GeoJSONSource>
+
+        <GeoJSONSource id="discovered-resource-zones" data={discoveredDepositsGeoJson}>
+          <Layer
+            id="resource-zone-fill"
+            type="fill"
+            paint={{
+              'fill-color': [
+                'match', ['get', 'resourceCode'],
+                'OIL', '#111820',
+                'GAS', '#2d9df4',
+                'GOLD', '#f4b942',
+                'COPPER', '#d76b3e',
+                'IRON', '#a7b2bd',
+                'COAL', '#343b43',
+                'URANIUM', '#65db72',
+                'RARE_EARTHS', '#9b63e8',
+                '#32d8e6',
+              ],
+              'fill-opacity': 0.5,
+            } as never}
+          />
+          <Layer
+            id="resource-zone-outline"
+            type="line"
+            paint={{
+              'line-color': '#f4f8fa',
+              'line-width': 2.2,
+              'line-opacity': 0.82,
             } as never}
           />
         </GeoJSONSource>
@@ -401,7 +461,12 @@ export default function App() {
           <MapToolButton
             source={gameAssets.utility.filter}
             accessibilityLabel="Фильтры ресурсов"
-            onPress={() => setMessage('Фильтр ресурсов: нефть, газ, металлы, уголь и редкоземельные')}
+            active={showResourceOverlay}
+            onPress={() => setShowResourceOverlay((current) => {
+              const next = !current;
+              setMessage(next ? 'Слой найденных ресурсов включён' : 'Слой найденных ресурсов скрыт');
+              return next;
+            })}
           />
           <MapToolButton
             source={gameAssets.utility.fullscreen}
@@ -501,17 +566,19 @@ function MapToolButton({
   source,
   onPress,
   accessibilityLabel,
+  active = false,
 }: {
   source: ImageSourcePropType;
   onPress: () => void;
   accessibilityLabel: string;
+  active?: boolean;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      style={({ pressed }) => [styles.mapToolButton, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.mapToolButton, active && styles.mapToolButtonActive, pressed && styles.pressed]}
     >
       <Image source={source} style={styles.mapToolImage} resizeMode="contain" />
     </Pressable>
@@ -895,6 +962,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 8,
   },
+  mapToolButtonActive: { borderWidth: 1, borderColor: 'rgba(56,216,255,0.85)', shadowColor: '#38d8ff', shadowOpacity: 0.5 },
   mapToolImage: { width: '100%', height: '100%' },
   spacer: { flex: 1 },
   bottomNav: {
