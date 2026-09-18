@@ -30,6 +30,7 @@ import { gameAssets } from './src/gameAssets';
 import { GameSettingsPanel } from './src/GameSettingsPanel';
 import { GeologyHeatmapLayer } from './src/GeologyHeatmapLayer';
 import { HeatmapResourceSelector } from './src/HeatmapResourceSelector';
+import { IndustrialMapLayer } from './src/IndustrialMapLayer';
 import { ResourceHud } from './src/ResourceHud';
 import { useGameSettings } from './src/gameSettings';
 import { useGameSounds } from './src/useGameSounds';
@@ -85,14 +86,12 @@ function cellsToStatusMarkers(cells: WorldCell[]): FeatureCollection<Point> {
   return {
     type: 'FeatureCollection',
     features: cells.flatMap((cell) => {
-      if (!cell.claim && !cell.building) return [];
+      if (!cell.claim || cell.building) return [];
       return [{
         type: 'Feature' as const,
         id: `status-${cell.h3Index}`,
         properties: {
           ownerKind: ownerKind(cell),
-          hasBuilding: cell.building ? 1 : 0,
-          level: cell.building?.level ?? 0,
         },
         geometry: {
           type: 'Point' as const,
@@ -547,14 +546,9 @@ export default function AppSectioned() {
             id="territory-status-halo"
             type="circle"
             paint={{
-              'circle-radius': [
-                'case',
-                ['==', ['get', 'hasBuilding'], 1], 13,
-                9,
-              ],
+              'circle-radius': 9,
               'circle-color': [
                 'case',
-                ['==', ['get', 'hasBuilding'], 1], '#f4bd42',
                 ['==', ['get', 'ownerKind'], 'mine'], '#35df9e',
                 '#f05f65',
               ],
@@ -566,14 +560,9 @@ export default function AppSectioned() {
             id="territory-status-core"
             type="circle"
             paint={{
-              'circle-radius': [
-                'case',
-                ['==', ['get', 'hasBuilding'], 1], 6.5,
-                4.5,
-              ],
+              'circle-radius': 4.5,
               'circle-color': [
                 'case',
-                ['==', ['get', 'hasBuilding'], 1], '#f4bd42',
                 ['==', ['get', 'ownerKind'], 'mine'], '#35df9e',
                 '#f05f65',
               ],
@@ -592,6 +581,13 @@ export default function AppSectioned() {
             } as never}
           />
         </GeoJSONSource>
+
+        <IndustrialMapLayer
+          cells={world?.cells ?? []}
+          playerId={DEMO_PLAYER_ID}
+          selectedH3={selectedCell?.h3Index}
+          onSelect={selectCell}
+        />
 
         <GeoJSONSource id="scan-coverage-preview" data={scanCoverageGeoJson}>
           <Layer

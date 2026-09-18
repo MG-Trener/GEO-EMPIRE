@@ -1,5 +1,5 @@
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { gameAssets, resourceIconForCode } from './gameAssets';
+import { gameAssets, industrialIconForBuilding, resourceIconForCode } from './gameAssets';
 import type { ExtractionStatus, GeologyScanResponse, WorldCell } from './types';
 
 type Props = {
@@ -78,11 +78,11 @@ export function StrategicCellSummary({
             source={primaryDeposit
               ? resourceIconForCode(primaryDeposit.resource.code)
               : cell.building
-                ? gameAssets.utility.build
+                ? industrialIconForBuilding(cell.building.code, cell.building.status)
                 : owned
                   ? gameAssets.utility.territories
                   : gameAssets.utility.marker}
-            style={styles.icon}
+            style={cell.building ? styles.industryIcon : styles.icon}
             resizeMode="contain"
           />
         </View>
@@ -191,8 +191,9 @@ const styles = StyleSheet.create({
   statusOwned: { backgroundColor: '#35df9e' },
   statusRival: { backgroundColor: '#f05f65' },
   statusIndustry: { backgroundColor: '#f4bd42' },
-  iconFrame: { width: 43, height: 43, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.035)', justifyContent: 'center', alignItems: 'center' },
+  iconFrame: { width: 43, height: 43, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.035)', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   icon: { width: 39, height: 39 },
+  industryIcon: { width: 47, height: 47 },
   textBlock: { flex: 1, minWidth: 0 },
   status: { color: '#6f96a7', fontSize: 6.6, fontWeight: '900', letterSpacing: 0.9 },
   subtitle: { color: '#eef8fb', fontSize: 10.5, fontWeight: '900', marginTop: 2 },

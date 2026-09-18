@@ -70,6 +70,12 @@ export const gameAssets = {
     rareEarths: require('../assets/images/sheet_ru_1/sheet_ru_1_element_025.png'),
     strategic: require('../assets/images/sheet_ru_1/sheet_ru_1_element_026.png'),
   },
+  industry: {
+    oilPumpjack: require('../assets/images/buildings/oil-pumpjack.png'),
+    mineTruck: require('../assets/images/equipment/open-pit-mining-truck.png'),
+    construction: require('../assets/images/sheet_ru_2/sheet_ru_2_element_019.png'),
+    facility: require('../assets/images/sheet_ru_2/sheet_ru_2_element_007.png'),
+  },
   splash: {
     start: require('../assets/images/splash/geo-empire-start.jpg'),
     promo: require('../assets/images/splash/geo-empire-promo.jpg'),
@@ -87,4 +93,28 @@ export function resourceIconForCode(code?: string | null): ImageSourcePropType {
   if (normalized.includes('URAN') || normalized.includes('УРАН')) return gameAssets.resources.uranium;
   if (normalized.includes('RARE') || normalized.includes('REE') || normalized.includes('РЕДКОЗЕМ')) return gameAssets.resources.rareEarths;
   return gameAssets.resources.strategic;
+}
+
+export function industrialIconForBuilding(code?: string | null, status?: string | null): ImageSourcePropType {
+  const normalizedCode = String(code ?? '').toUpperCase();
+  const normalizedStatus = String(status ?? '').toUpperCase();
+
+  if (
+    normalizedStatus.includes('CONSTRUCT')
+    || normalizedStatus.includes('BUILD')
+    || normalizedStatus.includes('PLANNED')
+    || normalizedStatus.includes('СТРО')
+  ) {
+    return gameAssets.industry.construction;
+  }
+
+  if (normalizedCode.includes('MINE') || normalizedCode.includes('PIT')) {
+    return gameAssets.industry.mineTruck;
+  }
+
+  if (normalizedCode.includes('OIL') || normalizedCode.includes('GAS') || normalizedCode.includes('WELL')) {
+    return gameAssets.industry.oilPumpjack;
+  }
+
+  return gameAssets.industry.facility;
 }
