@@ -204,6 +204,7 @@ export type InventoryItem = {
   name: string;
   unit: string;
   quantity: number;
+  ratePerHour: number;
   updatedAt: string;
 };
 
