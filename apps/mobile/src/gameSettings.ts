@@ -1,13 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'geo-empire.settings.v1';
+const STORAGE_KEY = 'geo-empire.settings.v2';
 
 export type GameSettings = {
   soundEnabled: boolean;
   soundVolume: number;
   showCellGrid: boolean;
   showResourceOverlay: boolean;
+  showOwnedTerritories: boolean;
+  showRivals: boolean;
+  showIndustry: boolean;
+  showScanRange: boolean;
   showMission: boolean;
 };
 
@@ -16,6 +20,10 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   soundVolume: 0.6,
   showCellGrid: true,
   showResourceOverlay: true,
+  showOwnedTerritories: true,
+  showRivals: true,
+  showIndustry: true,
+  showScanRange: true,
   showMission: true,
 };
 
