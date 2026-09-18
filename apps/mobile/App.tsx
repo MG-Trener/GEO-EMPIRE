@@ -1,1 +1,1 @@
-export { default } from './AppSectioned';
+export { default } from './AppFirstMiningLoop';
