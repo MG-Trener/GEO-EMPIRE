@@ -1,0 +1,80 @@
+name: Wire mobile navigation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/wire-mobile-navigation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Connect bottom HUD to live sections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/mobile/App.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+            (
+              "import { GeologyProgressPanel } from './src/GeologyProgressPanel';",
+              "import { GeologyProgressPanel, type GeoHubSection } from './src/GeologyProgressPanel';"
+            ),
+            (
+              "const MAP_ZOOM = 18.15;\n",
+              "const MAP_ZOOM = 18.15;\n\ntype MainSection = 'map' | 'exploration' | 'development' | 'trade' | 'technology';\n"
+            ),
+            (
+              "  const [showGeology, setShowGeology] = useState(false);\n  const [sheetExpanded, setSheetExpanded] = useState(false);",
+              "  const [showGeology, setShowGeology] = useState(false);\n  const [hubSection, setHubSection] = useState<GeoHubSection>('geology');\n  const [activeMainSection, setActiveMainSection] = useState<MainSection>('map');\n  const [sheetExpanded, setSheetExpanded] = useState(false);"
+            ),
+            (
+              "  const showFutureSection = useCallback((name: string) => {\n    setMessage(`${name}: интерфейс раздела готовится к подключению к игровой логике`);\n    setSheetExpanded(false);\n  }, []);",
+              "  const openHubSection = useCallback((mainSection: MainSection, section: GeoHubSection, message?: string) => {\n    setActiveMainSection(mainSection);\n    setHubSection(section);\n    setShowGeology(true);\n    setSheetExpanded(true);\n    if (message) setMessage(message);\n  }, []);"
+            ),
+            (
+              "        <BottomNavigation\n          geologyActive={showGeology}\n          onMap={() => {\n            setShowGeology(false);\n            setSheetExpanded(false);\n          }}\n          onExploration={() => {\n            setShowGeology(true);\n            setSheetExpanded(true);\n          }}\n          onDevelopment={() => showFutureSection('Разработка')}\n          onTrade={() => showFutureSection('Торговля')}\n          onTechnology={() => showFutureSection('Технологии')}\n        />",
+              "        <BottomNavigation\n          activeSection={activeMainSection}\n          onMap={() => {\n            setActiveMainSection('map');\n            setShowGeology(false);\n            setSheetExpanded(false);\n          }}\n          onExploration={() => openHubSection('exploration', 'deposits', 'Разведка: известные месторождения и углублённые исследования')}\n          onDevelopment={() => openHubSection('development', 'deposits', 'Разработка: выберите месторождение и инвестиционный проект')}\n          onTrade={() => openHubSection('trade', 'market', 'Торговля: товарная биржа ресурсов')}\n          onTechnology={() => openHubSection('technology', 'geology', 'Технологии: развитие геологической службы')}\n        />"
+            ),
+            (
+              "                <GeologyProgressPanel onMessage={setMessage} />",
+              "                <GeologyProgressPanel initialSection={hubSection} onMessage={setMessage} />"
+            ),
+            (
+              "function BottomNavigation({\n  geologyActive,\n  onMap,\n  onExploration,\n  onDevelopment,\n  onTrade,\n  onTechnology,\n}: {\n  geologyActive: boolean;\n  onMap: () => void;\n  onExploration: () => void;\n  onDevelopment: () => void;\n  onTrade: () => void;\n  onTechnology: () => void;\n}) {\n  return (\n    <View style={styles.bottomNav}>\n      <BottomNavButton source={gameAssets.nav.map} active={!geologyActive} onPress={onMap} />\n      <BottomNavButton source={gameAssets.nav.exploration} active={geologyActive} onPress={onExploration} />\n      <BottomNavButton source={gameAssets.nav.development} onPress={onDevelopment} />\n      <BottomNavButton source={gameAssets.nav.trade} onPress={onTrade} />\n      <BottomNavButton source={gameAssets.nav.technologies} onPress={onTechnology} />\n    </View>\n  );\n}",
+              "function BottomNavigation({\n  activeSection,\n  onMap,\n  onExploration,\n  onDevelopment,\n  onTrade,\n  onTechnology,\n}: {\n  activeSection: MainSection;\n  onMap: () => void;\n  onExploration: () => void;\n  onDevelopment: () => void;\n  onTrade: () => void;\n  onTechnology: () => void;\n}) {\n  return (\n    <View style={styles.bottomNav}>\n      <BottomNavButton source={gameAssets.nav.map} active={activeSection === 'map'} onPress={onMap} />\n      <BottomNavButton source={gameAssets.nav.exploration} active={activeSection === 'exploration'} onPress={onExploration} />\n      <BottomNavButton source={gameAssets.nav.development} active={activeSection === 'development'} onPress={onDevelopment} />\n      <BottomNavButton source={gameAssets.nav.trade} active={activeSection === 'trade'} onPress={onTrade} />\n      <BottomNavButton source={gameAssets.nav.technologies} active={activeSection === 'technology'} onPress={onTechnology} />\n    </View>\n  );\n}"
+            ),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'Expected block not found:\n{old[:180]}')
+              text = text.replace(old, new, 1)
+
+          # When a cell is selected on the map, return navigation focus to the map.
+          target = "              setShowGeology(false);\n              setSheetExpanded(false);"
+          replacement = "              setShowGeology(false);\n              setActiveMainSection('map');\n              setSheetExpanded(false);"
+          if target not in text:
+              raise SystemExit('Map selection block not found')
+          text = text.replace(target, replacement, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit navigation wiring
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/mobile/App.tsx
+          git commit -m "feat(mobile): connect bottom HUD to live game sections"
+          git push origin main
