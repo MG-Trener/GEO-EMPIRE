@@ -54,26 +54,40 @@ export function ResourceHud({ inventory }: { inventory: InventoryItem[] }) {
       {expanded ? (
         <View style={styles.dropdown}>
           <View style={styles.dropdownHeader}>
-            <Text style={styles.dropdownTitle}>СКЛАД И ДОБЫЧА</Text>
-            <Text style={styles.dropdownHint}>наличие · скорость в час</Text>
+            <View>
+              <Text style={styles.dropdownTitle}>СКЛАД РЕСУРСОВ</Text>
+              <Text style={styles.dropdownHint}>5 колонок · прокрутка по вертикали</Text>
+            </View>
+            <View style={styles.productionBadge}>
+              <Text style={styles.productionBadgeValue}>{activeProduction}</Text>
+              <Text style={styles.productionBadgeLabel}>В ДОБЫЧЕ</Text>
+            </View>
           </View>
-          <ScrollView style={styles.list} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+
+          <ScrollView
+            style={styles.gridScroll}
+            contentContainerStyle={styles.grid}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+          >
             {sorted.length ? sorted.map((item) => (
-              <View key={item.resourceId} style={styles.row}>
-                <Image source={resourceIconForCode(item.code || item.name)} style={styles.icon} resizeMode="contain" />
-                <View style={styles.nameBlock}>
-                  <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.unit}>{item.unit}</Text>
-                </View>
-                <View style={styles.values}>
-                  <Text style={styles.quantity}>{formatCompact(item.quantity)} {item.unit}</Text>
-                  <Text style={[styles.rate, item.ratePerHour > 0 && styles.rateActive]}>
-                    +{formatCompact(item.ratePerHour)} {item.unit}/ч
+              <View key={item.resourceId} style={styles.gridCellWrap}>
+                <View style={[styles.gridCell, item.ratePerHour > 0 && styles.gridCellActive]}>
+                  <View style={styles.iconStage}>
+                    <Image source={resourceIconForCode(item.code || item.name)} style={styles.gridIcon} resizeMode="contain" />
+                    {item.ratePerHour > 0 ? <View style={styles.liveDot} /> : null}
+                  </View>
+                  <Text style={styles.gridName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.gridQuantity} numberOfLines={1}>{formatCompact(item.quantity)}</Text>
+                  <Text style={[styles.gridRate, item.ratePerHour > 0 && styles.gridRateActive]} numberOfLines={1}>
+                    {item.ratePerHour > 0 ? `+${formatCompact(item.ratePerHour)}/ч` : item.unit}
                   </Text>
                 </View>
               </View>
             )) : (
-              <Text style={styles.empty}>После первой добычи ресурсы появятся здесь.</Text>
+              <View style={styles.emptyBox}>
+                <Text style={styles.empty}>После первой добычи ресурсы появятся здесь.</Text>
+              </View>
             )}
           </ScrollView>
         </View>
@@ -108,7 +122,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     top: 46,
-    maxHeight: 285,
+    maxHeight: 356,
     borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: 'rgba(4,14,22,0.985)',
@@ -120,20 +134,44 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 20,
   },
-  dropdownHeader: { paddingHorizontal: 11, paddingTop: 9, paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
+  dropdownHeader: {
+    minHeight: 47,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
   dropdownTitle: { color: '#6fdbea', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
   dropdownHint: { color: '#607984', fontSize: 7, marginTop: 2 },
-  list: { maxHeight: 235 },
-  listContent: { paddingHorizontal: 8, paddingVertical: 5 },
-  row: { minHeight: 43, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
-  icon: { width: 31, height: 31 },
-  nameBlock: { flex: 1, minWidth: 0 },
-  name: { color: '#d9e5ea', fontSize: 9, fontWeight: '800' },
-  unit: { color: '#607783', fontSize: 6.5, marginTop: 1 },
-  values: { alignItems: 'flex-end', minWidth: 88 },
-  quantity: { color: '#eef7fa', fontSize: 8.5, fontWeight: '900' },
-  rate: { color: '#647983', fontSize: 7, marginTop: 2 },
-  rateActive: { color: '#47ddb5' },
-  empty: { color: '#80949f', fontSize: 9, padding: 14, textAlign: 'center' },
+  productionBadge: { alignItems: 'flex-end' },
+  productionBadgeValue: { color: '#47ddb5', fontSize: 12, fontWeight: '900' },
+  productionBadgeLabel: { color: '#607984', fontSize: 6, fontWeight: '800', letterSpacing: 0.6 },
+  gridScroll: { maxHeight: 300 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 4, paddingVertical: 5 },
+  gridCellWrap: { width: '20%', padding: 2 },
+  gridCell: {
+    minHeight: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(12,28,38,0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(111,160,178,0.13)',
+  },
+  gridCellActive: { backgroundColor: 'rgba(10,50,49,0.92)', borderColor: 'rgba(71,221,181,0.26)' },
+  iconStage: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  gridIcon: { width: 33, height: 33 },
+  liveDot: { position: 'absolute', right: 0, top: 1, width: 6, height: 6, borderRadius: 4, backgroundColor: '#47ddb5', borderWidth: 1, borderColor: '#dffff6' },
+  gridName: { maxWidth: '100%', color: '#9eb0ba', fontSize: 6.4, fontWeight: '800', marginTop: 2, textAlign: 'center' },
+  gridQuantity: { color: '#eef7fa', fontSize: 8, fontWeight: '900', marginTop: 1 },
+  gridRate: { color: '#5f7480', fontSize: 6.2, marginTop: 1 },
+  gridRateActive: { color: '#47ddb5', fontWeight: '800' },
+  emptyBox: { width: '100%', padding: 12 },
+  empty: { color: '#80949f', fontSize: 9, textAlign: 'center' },
   pressed: { opacity: 0.78 },
 });
