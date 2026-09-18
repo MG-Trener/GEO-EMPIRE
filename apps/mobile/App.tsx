@@ -28,7 +28,7 @@ import {
   startExtraction,
 } from './src/api';
 import { gameAssets, resourceIconForCode } from './src/gameAssets';
-import { GeologyProgressPanel } from './src/GeologyProgressPanel';
+import { GeologyProgressPanel, type GeoHubSection } from './src/GeologyProgressPanel';
 import type {
   ExtractionStatus,
   GeologyScanResponse,
@@ -41,6 +41,8 @@ const ASTANA_DEMO = { lat: 51.1694, lng: 71.4491 };
 const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 const WORLD_RING = 6;
 const MAP_ZOOM = 18.15;
+
+type MainSection = 'map' | 'exploration' | 'development' | 'trade' | 'technology';
 
 function cellsToGeoJson(cells: WorldCell[], selectedH3?: string): FeatureCollection<Polygon> {
   return {
@@ -80,6 +82,8 @@ export default function App() {
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [showGeology, setShowGeology] = useState(false);
+  const [hubSection, setHubSection] = useState<GeoHubSection>('geology');
+  const [activeMainSection, setActiveMainSection] = useState<MainSection>('map');
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [action, setAction] = useState<'claim' | 'build' | 'extract' | 'collect' | null>(null);
   const [message, setMessage] = useState('Подготовка карты…');
@@ -307,9 +311,12 @@ export default function App() {
   const ownedByPlayer = selectedCell?.claim?.ownerId === DEMO_PLAYER_ID;
   const isExtractionBuilding = ['MINE', 'OIL_WELL', 'GAS_WELL'].includes(selectedCell?.building?.code ?? '');
 
-  const showFutureSection = useCallback((name: string) => {
-    setMessage(`${name}: интерфейс раздела готовится к подключению к игровой логике`);
-    setSheetExpanded(false);
+  const openHubSection = useCallback((mainSection: MainSection, section: GeoHubSection, message?: string) => {
+    setActiveMainSection(mainSection);
+    setHubSection(section);
+    setShowGeology(true);
+    setSheetExpanded(true);
+    if (message) setMessage(message);
   }, []);
 
   return (
@@ -328,6 +335,7 @@ export default function App() {
               setSelectedCell(cell);
               setScan(null);
               setShowGeology(false);
+              setActiveMainSection('map');
               setSheetExpanded(false);
             }
           }}
@@ -405,18 +413,16 @@ export default function App() {
         <View style={styles.spacer} />
 
         <BottomNavigation
-          geologyActive={showGeology}
+          activeSection={activeMainSection}
           onMap={() => {
+            setActiveMainSection('map');
             setShowGeology(false);
             setSheetExpanded(false);
           }}
-          onExploration={() => {
-            setShowGeology(true);
-            setSheetExpanded(true);
-          }}
-          onDevelopment={() => showFutureSection('Разработка')}
-          onTrade={() => showFutureSection('Торговля')}
-          onTechnology={() => showFutureSection('Технологии')}
+          onExploration={() => openHubSection('exploration', 'deposits', 'Разведка: известные месторождения и углублённые исследования')}
+          onDevelopment={() => openHubSection('development', 'deposits', 'Разработка: выберите месторождение и инвестиционный проект')}
+          onTrade={() => openHubSection('trade', 'market', 'Торговля: товарная биржа ресурсов')}
+          onTechnology={() => openHubSection('technology', 'geology', 'Технологии: развитие геологической службы')}
         />
 
         <View style={[styles.bottomCard, sheetExpanded && styles.bottomCardExpanded]}>
@@ -435,7 +441,7 @@ export default function App() {
           >
             {showGeology ? (
               <>
-                <GeologyProgressPanel onMessage={setMessage} />
+                <GeologyProgressPanel initialSection={hubSection} onMessage={setMessage} />
                 <Text style={styles.devText}>Прокачка применяется к следующим георазведкам сразу после покупки.</Text>
               </>
             ) : (
@@ -513,14 +519,14 @@ function MapToolButton({
 }
 
 function BottomNavigation({
-  geologyActive,
+  activeSection,
   onMap,
   onExploration,
   onDevelopment,
   onTrade,
   onTechnology,
 }: {
-  geologyActive: boolean;
+  activeSection: MainSection;
   onMap: () => void;
   onExploration: () => void;
   onDevelopment: () => void;
@@ -529,11 +535,11 @@ function BottomNavigation({
 }) {
   return (
     <View style={styles.bottomNav}>
-      <BottomNavButton source={gameAssets.nav.map} active={!geologyActive} onPress={onMap} />
-      <BottomNavButton source={gameAssets.nav.exploration} active={geologyActive} onPress={onExploration} />
-      <BottomNavButton source={gameAssets.nav.development} onPress={onDevelopment} />
-      <BottomNavButton source={gameAssets.nav.trade} onPress={onTrade} />
-      <BottomNavButton source={gameAssets.nav.technologies} onPress={onTechnology} />
+      <BottomNavButton source={gameAssets.nav.map} active={activeSection === 'map'} onPress={onMap} />
+      <BottomNavButton source={gameAssets.nav.exploration} active={activeSection === 'exploration'} onPress={onExploration} />
+      <BottomNavButton source={gameAssets.nav.development} active={activeSection === 'development'} onPress={onDevelopment} />
+      <BottomNavButton source={gameAssets.nav.trade} active={activeSection === 'trade'} onPress={onTrade} />
+      <BottomNavButton source={gameAssets.nav.technologies} active={activeSection === 'technology'} onPress={onTechnology} />
     </View>
   );
 }
