@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { GeoJSONSource, Images, Layer } from '@maplibre/maplibre-react-native';
 import type { FeatureCollection, Point } from 'geojson';
 import { gameAssets } from './gameAssets';
@@ -10,7 +10,7 @@ type IndustrialIconKey =
   | 'industry-construction'
   | 'industry-facility';
 
-function isConstruction(status?: string | null): boolean {
+function constructionStatus(status?: string | null): boolean {
   const normalized = String(status ?? '').toUpperCase();
   return normalized.includes('CONSTRUCT')
     || normalized.includes('BUILD')
@@ -18,8 +18,14 @@ function isConstruction(status?: string | null): boolean {
     || normalized.includes('СТРО');
 }
 
-function iconKeyForBuilding(code?: string | null, status?: string | null): IndustrialIconKey {
-  if (isConstruction(status)) return 'industry-construction';
+function isUnderConstruction(cell: WorldCell, now: number): boolean {
+  if (!cell.building || !constructionStatus(cell.building.status)) return false;
+  const completedAt = cell.building.completedAt ? new Date(cell.building.completedAt).getTime() : Number.POSITIVE_INFINITY;
+  return completedAt > now;
+}
+
+function iconKeyForBuilding(code?: string | null, underConstruction = false): IndustrialIconKey {
+  if (underConstruction) return 'industry-construction';
 
   const normalized = String(code ?? '').toUpperCase();
   if (normalized.includes('MINE') || normalized.includes('PIT')) return 'industry-mine';
@@ -29,10 +35,22 @@ function iconKeyForBuilding(code?: string | null, status?: string | null): Indus
   return 'industry-facility';
 }
 
+function formatCountdown(seconds: number): string {
+  const safe = Math.max(0, Math.ceil(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const rest = safe % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
 function industrialData(
   cells: WorldCell[],
   playerId: string,
-  selectedH3?: string,
+  selectedH3: string | undefined,
+  now: number,
+  showOwned: boolean,
+  showRivals: boolean,
 ): FeatureCollection<Point> {
   return {
     type: 'FeatureCollection',
@@ -40,7 +58,15 @@ function industrialData(
       if (!cell.building) return [];
 
       const owned = cell.claim?.ownerId === playerId;
-      const underConstruction = isConstruction(cell.building.status);
+      if ((owned && !showOwned) || (!owned && !showRivals)) return [];
+
+      const underConstruction = isUnderConstruction(cell, now);
+      const completesAt = cell.building.completedAt ? new Date(cell.building.completedAt).getTime() : null;
+      const remainingSeconds = underConstruction && completesAt
+        ? Math.max(0, (completesAt - now) / 1000)
+        : 0;
+      const level = Math.max(1, cell.building.level ?? 1);
+
       return [{
         type: 'Feature' as const,
         id: `industry-${cell.h3Index}`,
@@ -48,9 +74,10 @@ function industrialData(
           h3Index: cell.h3Index,
           ownerKind: owned ? 'mine' : 'rival',
           selected: cell.h3Index === selectedH3 ? 1 : 0,
-          iconKey: iconKeyForBuilding(cell.building.code, cell.building.status),
-          level: Math.max(1, cell.building.level ?? 1),
+          iconKey: iconKeyForBuilding(cell.building.code, underConstruction),
+          level,
           underConstruction: underConstruction ? 1 : 0,
+          label: underConstruction ? `СТРОИТСЯ ${formatCountdown(remainingSeconds)}` : `LV ${level}`,
         },
         geometry: {
           type: 'Point' as const,
@@ -66,16 +93,35 @@ export function IndustrialMapLayer({
   playerId,
   selectedH3,
   onSelect,
+  visible = true,
+  showOwned = true,
+  showRivals = true,
 }: {
   cells: WorldCell[];
   playerId: string;
   selectedH3?: string;
   onSelect?: (h3Index: string) => void;
+  visible?: boolean;
+  showOwned?: boolean;
+  showRivals?: boolean;
 }) {
+  const [now, setNow] = useState(Date.now());
+  const hasConstruction = cells.some((cell) => isUnderConstruction(cell, now));
+
+  useEffect(() => {
+    if (!hasConstruction) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasConstruction]);
+
   const data = useMemo(
-    () => industrialData(cells, playerId, selectedH3),
-    [cells, playerId, selectedH3],
+    () => visible
+      ? industrialData(cells, playerId, selectedH3, now, showOwned, showRivals)
+      : ({ type: 'FeatureCollection', features: [] } as FeatureCollection<Point>),
+    [cells, now, playerId, selectedH3, showOwned, showRivals, visible],
   );
+
+  if (!visible) return null;
 
   return (
     <>
@@ -102,8 +148,9 @@ export function IndustrialMapLayer({
           paint={{
             'circle-radius': [
               'case',
-              ['==', ['get', 'selected'], 1], 30,
-              24,
+              ['==', ['get', 'selected'], 1],
+              ['interpolate', ['linear'], ['zoom'], 10, 7, 12, 10, 14, 15, 16, 22, 18, 30, 20, 36],
+              ['interpolate', ['linear'], ['zoom'], 10, 5, 12, 8, 14, 12, 16, 18, 18, 24, 20, 30],
             ],
             'circle-color': [
               'case',
@@ -112,9 +159,10 @@ export function IndustrialMapLayer({
               '#f05f65',
             ],
             'circle-opacity': [
-              'case',
-              ['==', ['get', 'selected'], 1], 0.26,
-              0.15,
+              'interpolate', ['linear'], ['zoom'],
+              10, 0.08,
+              14, 0.13,
+              18, ['case', ['==', ['get', 'selected'], 1], 0.28, 0.17],
             ],
             'circle-blur': 0.35,
             'circle-stroke-color': [
@@ -124,11 +172,12 @@ export function IndustrialMapLayer({
               '#f05f65',
             ],
             'circle-stroke-width': [
-              'case',
-              ['==', ['get', 'selected'], 1], 2.5,
-              1.2,
+              'interpolate', ['linear'], ['zoom'],
+              10, 0.5,
+              14, 1,
+              18, ['case', ['==', ['get', 'selected'], 1], 2.5, 1.2],
             ],
-            'circle-stroke-opacity': 0.7,
+            'circle-stroke-opacity': 0.72,
           } as never}
         />
 
@@ -139,10 +188,22 @@ export function IndustrialMapLayer({
             'icon-image': ['get', 'iconKey'],
             'icon-size': [
               'match', ['get', 'iconKey'],
-              'industry-mine', ['case', ['==', ['get', 'selected'], 1], 0.095, 0.078],
-              'industry-pumpjack', ['case', ['==', ['get', 'selected'], 1], 0.095, 0.078],
-              'industry-construction', ['case', ['==', ['get', 'selected'], 1], 0.72, 0.58],
-              ['case', ['==', ['get', 'selected'], 1], 0.72, 0.58],
+              'industry-mine', [
+                'interpolate', ['linear'], ['zoom'],
+                10, 0.022, 12, 0.032, 14, 0.046, 16, 0.063, 18, 0.082, 20, 0.105,
+              ],
+              'industry-pumpjack', [
+                'interpolate', ['linear'], ['zoom'],
+                10, 0.022, 12, 0.032, 14, 0.046, 16, 0.063, 18, 0.082, 20, 0.105,
+              ],
+              'industry-construction', [
+                'interpolate', ['linear'], ['zoom'],
+                10, 0.18, 12, 0.26, 14, 0.38, 16, 0.52, 18, 0.68, 20, 0.84,
+              ],
+              [
+                'interpolate', ['linear'], ['zoom'],
+                10, 0.18, 12, 0.26, 14, 0.38, 16, 0.52, 18, 0.68, 20, 0.84,
+              ],
             ],
             'icon-anchor': 'bottom',
             'icon-allow-overlap': true,
@@ -151,7 +212,7 @@ export function IndustrialMapLayer({
           paint={{
             'icon-opacity': [
               'case',
-              ['==', ['get', 'ownerKind'], 'rival'], 0.82,
+              ['==', ['get', 'ownerKind'], 'rival'], 0.78,
               1,
             ],
           } as never}
@@ -161,23 +222,23 @@ export function IndustrialMapLayer({
           id="industrial-object-label"
           type="symbol"
           layout={{
-            'text-field': [
-              'case',
-              ['==', ['get', 'underConstruction'], 1], 'СТРОИТСЯ',
-              ['concat', 'LV ', ['to-string', ['get', 'level']]],
-            ],
-            'text-size': 9,
+            'text-field': ['get', 'label'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 12, 6, 14, 7.5, 16, 9, 18, 10.5],
             'text-font': ['Noto Sans Bold'],
             'text-anchor': 'top',
-            'text-offset': [0, 0.4],
+            'text-offset': [0, 0.35],
             'text-allow-overlap': true,
             'text-ignore-placement': true,
           } as never}
           paint={{
-            'text-color': '#f5fbfd',
+            'text-color': [
+              'case',
+              ['==', ['get', 'underConstruction'], 1], '#ffd66b',
+              '#f5fbfd',
+            ],
             'text-halo-color': '#061018',
             'text-halo-width': 1.8,
-            'text-opacity': 0.95,
+            'text-opacity': ['interpolate', ['linear'], ['zoom'], 11, 0, 13.5, 0.35, 15, 0.88, 16.5, 1],
           } as never}
         />
       </GeoJSONSource>
