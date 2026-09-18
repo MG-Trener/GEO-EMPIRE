@@ -14,7 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location';
 import { Camera, GeoJSONSource, Layer, Map } from '@maplibre/maplibre-react-native';
 import { cellToBoundary, gridDisk } from 'h3-js';
-import type { FeatureCollection, Polygon } from 'geojson';
+import type { FeatureCollection, Point, Polygon } from 'geojson';
 import {
   claimTerritory,
   collectExtraction,
@@ -26,15 +26,16 @@ import {
   runGeologyScan,
   startExtraction,
 } from './src/api';
-import { gameAssets, resourceIconForCode } from './src/gameAssets';
+import { gameAssets } from './src/gameAssets';
 import { GameSettingsPanel } from './src/GameSettingsPanel';
 import { GeologyHeatmapLayer } from './src/GeologyHeatmapLayer';
 import { HeatmapResourceSelector } from './src/HeatmapResourceSelector';
 import { ResourceHud } from './src/ResourceHud';
 import { useGameSettings } from './src/gameSettings';
 import { useGameSounds } from './src/useGameSounds';
-import type { GeoHubSection } from './src/GeologyProgressPanel';
 import { MainSectionPanel, type GameplaySection } from './src/MainSectionPanel';
+import { StrategicCellSummary } from './src/StrategicCellSummary';
+import { TerritoryPanel, type TerritoryAction } from './src/TerritoryPanel';
 import type {
   ExtractionStatus,
   GeologyCapabilities,
@@ -52,7 +53,11 @@ const EARTH_RADIUS_METERS = 6_371_000;
 const CLAIM_COST = 2_500;
 
 type MainSection = 'map' | GameplaySection;
-type Action = 'claim' | 'extract' | 'collect' | null;
+
+function ownerKind(cell: WorldCell): 'free' | 'mine' | 'rival' {
+  if (!cell.claim) return 'free';
+  return cell.claim.ownerId === DEMO_PLAYER_ID ? 'mine' : 'rival';
+}
 
 function cellsToGeoJson(cells: WorldCell[], selectedH3?: string): FeatureCollection<Polygon> {
   return {
@@ -67,9 +72,33 @@ function cellsToGeoJson(cells: WorldCell[], selectedH3?: string): FeatureCollect
           occupied: cell.occupied ? 1 : 0,
           current: cell.distance === 0 ? 1 : 0,
           selected: cell.h3Index === selectedH3 ? 1 : 0,
+          ownerKind: ownerKind(cell),
+          hasBuilding: cell.building ? 1 : 0,
         },
         geometry: { type: 'Polygon', coordinates: [[...boundary, boundary[0]]] },
       };
+    }),
+  };
+}
+
+function cellsToStatusMarkers(cells: WorldCell[]): FeatureCollection<Point> {
+  return {
+    type: 'FeatureCollection',
+    features: cells.flatMap((cell) => {
+      if (!cell.claim && !cell.building) return [];
+      return [{
+        type: 'Feature' as const,
+        id: `status-${cell.h3Index}`,
+        properties: {
+          ownerKind: ownerKind(cell),
+          hasBuilding: cell.building ? 1 : 0,
+          level: cell.building?.level ?? 0,
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [cell.center.lng, cell.center.lat],
+        },
+      }];
     }),
   };
 }
@@ -136,6 +165,7 @@ export default function AppSectioned() {
   const insets = useSafeAreaInsets();
   const safeTop = Math.max(insets.top, 24) + 6;
   const safeBottom = Math.max(insets.bottom, 24) + 8;
+
   const [position, setPosition] = useState(ASTANA_DEMO);
   const [world, setWorld] = useState<LocateResponse | null>(null);
   const [selectedCell, setSelectedCell] = useState<WorldCell | null>(null);
@@ -147,18 +177,27 @@ export default function AppSectioned() {
   const [loadingWorld, setLoadingWorld] = useState(false);
   const [loadingExtraction, setLoadingExtraction] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [showGeology, setShowGeology] = useState(false);
-  const [hubSection, setHubSection] = useState<GeoHubSection>('geology');
   const [activeMainSection, setActiveMainSection] = useState<MainSection>('map');
   const [sheetExpanded, setSheetExpanded] = useState(false);
-  const [action, setAction] = useState<Action>(null);
+  const [action, setAction] = useState<TerritoryAction>(null);
   const [message, setMessage] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+
   const { settings, updateSetting, resetSettings } = useGameSettings();
-  const { click: playClick, scan: playScan, success: playSuccess, error: playError, cash: playCash } = useGameSounds(settings.soundEnabled, settings.soundVolume);
+  const {
+    click: playClick,
+    scan: playScan,
+    success: playSuccess,
+    error: playError,
+    cash: playCash,
+  } = useGameSounds(settings.soundEnabled, settings.soundVolume);
 
   const refreshInventory = useCallback(async () => {
-    try { setInventory(await getInventory()); } catch { setInventory([]); }
+    try {
+      setInventory(await getInventory());
+    } catch {
+      setInventory([]);
+    }
   }, []);
 
   const refreshCapabilities = useCallback(async () => {
@@ -196,6 +235,7 @@ export default function AppSectioned() {
 
   useEffect(() => {
     let cancelled = false;
+
     const start = async () => {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status === 'granted') {
@@ -207,14 +247,18 @@ export default function AppSectioned() {
             await refreshWorld(next);
             return;
           }
-        } catch { /* fallback below */ }
+        } catch {
+          // Fallback below.
+        }
       }
+
       if (!cancelled) {
         setPosition(ASTANA_DEMO);
         await refreshWorld(ASTANA_DEMO);
         setMessage('Геолокация недоступна - показан тестовый сектор');
       }
     };
+
     void start();
     return () => { cancelled = true; };
   }, [refreshWorld]);
@@ -222,6 +266,7 @@ export default function AppSectioned() {
   useEffect(() => {
     let cancelled = false;
     const building = selectedCell?.building;
+
     if (!building?.id || selectedCell?.claim?.ownerId !== DEMO_PLAYER_ID) {
       setExtraction(null);
       return () => { cancelled = true; };
@@ -229,7 +274,9 @@ export default function AppSectioned() {
 
     setLoadingExtraction(true);
     getExtractionStatus(building.id)
-      .then((status) => { if (!cancelled) setExtraction(status); })
+      .then((status) => {
+        if (!cancelled) setExtraction(status);
+      })
       .catch((error) => {
         if (!cancelled) {
           setExtraction(null);
@@ -238,7 +285,10 @@ export default function AppSectioned() {
           }
         }
       })
-      .finally(() => { if (!cancelled) setLoadingExtraction(false); });
+      .finally(() => {
+        if (!cancelled) setLoadingExtraction(false);
+      });
+
     return () => { cancelled = true; };
   }, [selectedCell]);
 
@@ -246,6 +296,12 @@ export default function AppSectioned() {
     () => cellsToGeoJson(world?.cells ?? [], selectedCell?.h3Index),
     [selectedCell?.h3Index, world],
   );
+
+  const statusMarkersGeoJson = useMemo(
+    () => cellsToStatusMarkers(world?.cells ?? []),
+    [world],
+  );
+
   const playerGeoJson = useMemo(() => ({
     type: 'FeatureCollection' as const,
     features: [{
@@ -256,14 +312,17 @@ export default function AppSectioned() {
   }), [position]);
 
   const effectiveCapabilities = scan?.capabilities ?? geologyCapabilities;
+
   const scanCoverageGeoJson = useMemo(
     () => scanCoverageToGeoJson(selectedCell?.h3Index, effectiveCapabilities?.coverageRing ?? 0),
     [effectiveCapabilities?.coverageRing, selectedCell?.h3Index],
   );
+
   const scanRangeGeoJson = useMemo(
     () => rangeCircleToGeoJson(position.lat, position.lng, effectiveCapabilities?.rangeMeters ?? 0),
     [effectiveCapabilities?.rangeMeters, position.lat, position.lng],
   );
+
   const depositsInSelectedCell = useMemo(
     () => scan?.deposits.filter((deposit) => deposit.h3Index === selectedCell?.h3Index) ?? [],
     [scan, selectedCell?.h3Index],
@@ -271,10 +330,12 @@ export default function AppSectioned() {
 
   const runScan = useCallback(async () => {
     if (!selectedCell) return;
+
     setScanning(true);
     setScan(null);
     setSelectedHeatResource(null);
     playScan();
+
     try {
       const result = await runGeologyScan({
         playerId: DEMO_PLAYER_ID,
@@ -283,17 +344,22 @@ export default function AppSectioned() {
         targetLat: selectedCell.center.lat,
         targetLng: selectedCell.center.lng,
       });
+
       setScan(result);
       setGeologyCapabilities(result.capabilities);
       setSelectedHeatResource(result.deposits[0]?.resource.code ?? null);
       updateSetting('showResourceOverlay', true);
       playSuccess();
-      setSheetExpanded(true);
+      setSheetExpanded(false);
       setMessage(`Разведка: ${result.capabilities.scannedCellCount} яч. · найдено: ${result.deposits.length}`);
     } catch (error) {
       playError();
       const reason = error instanceof Error ? error.message : 'ошибка';
-      setMessage(reason === 'target_out_of_range' ? 'Выбранный участок вне радиуса георазведки' : 'Не удалось провести георазведку');
+      setMessage(
+        reason === 'target_out_of_range'
+          ? 'Выбранный участок вне радиуса георазведки'
+          : 'Не удалось провести георазведку',
+      );
     } finally {
       setScanning(false);
     }
@@ -301,6 +367,7 @@ export default function AppSectioned() {
 
   const claimSelected = useCallback(async () => {
     if (!selectedCell) return;
+
     setAction('claim');
     playClick();
     try {
@@ -312,9 +379,11 @@ export default function AppSectioned() {
       });
       await refreshWorld(position, selectedCell.h3Index);
       playSuccess();
-      setMessage(result.status === 'already_owned'
-        ? 'Этот участок уже принадлежит вашей компании'
-        : `Участок арендован · списано ${formatNumber(result.charged)} ₡`);
+      setMessage(
+        result.status === 'already_owned'
+          ? 'Этот участок уже принадлежит вашей компании'
+          : `Участок арендован · списано ${formatNumber(result.charged)} ₡`,
+      );
     } catch (error) {
       playError();
       setMessage(`Аренда участка: ${error instanceof Error ? error.message : 'ошибка'}`);
@@ -326,12 +395,15 @@ export default function AppSectioned() {
   const beginExtraction = useCallback(async (depositId: string) => {
     const buildingId = selectedCell?.building?.id;
     if (!buildingId) return;
+
     setAction('extract');
     try {
       const result = await startExtraction({ playerId: DEMO_PLAYER_ID, buildingId, depositId });
       setExtraction(await getExtractionStatus(buildingId));
       playSuccess();
-      setMessage(`Добыча «${result.deposit.resource.name}» запущена · ${formatNumber(result.ratePerHour, 2)} ${result.deposit.resource.unit}/ч`);
+      setMessage(
+        `Добыча «${result.deposit.resource.name}» запущена · ${formatNumber(result.ratePerHour, 2)} ${result.deposit.resource.unit}/ч`,
+      );
       await refreshWorld(position, selectedCell.h3Index);
     } catch (error) {
       playError();
@@ -344,22 +416,27 @@ export default function AppSectioned() {
   const collectResources = useCallback(async () => {
     const buildingId = selectedCell?.building?.id;
     if (!buildingId) return;
+
     setAction('collect');
     try {
       const result = await collectExtraction({ playerId: DEMO_PLAYER_ID, buildingId });
       const operatingCost = result.economics?.operatingCost ?? 0;
-      setMessage(operatingCost > 0
-        ? `Получено ${formatNumber(result.collected, 2)} ${result.resource.unit} · OPEX ${formatNumber(operatingCost)} ₡`
-        : `Получено ${formatNumber(result.collected, 2)} ${result.resource.unit}`);
+      setMessage(
+        operatingCost > 0
+          ? `Получено ${formatNumber(result.collected, 2)} ${result.resource.unit} · OPEX ${formatNumber(operatingCost)} ₡`
+          : `Получено ${formatNumber(result.collected, 2)} ${result.resource.unit}`,
+      );
       setExtraction(await getExtractionStatus(buildingId));
       playCash();
       await refreshInventory();
     } catch (error) {
       playError();
       const reason = error instanceof Error ? error.message : 'ошибка';
-      setMessage(reason === 'insufficient_operating_funds'
-        ? 'Недостаточно средств для эксплуатационных расходов'
-        : `Получение ресурсов: ${reason}`);
+      setMessage(
+        reason === 'insufficient_operating_funds'
+          ? 'Недостаточно средств для эксплуатационных расходов'
+          : `Получение ресурсов: ${reason}`,
+      );
     } finally {
       setAction(null);
     }
@@ -368,23 +445,42 @@ export default function AppSectioned() {
   const ownedByPlayer = selectedCell?.claim?.ownerId === DEMO_PLAYER_ID;
   const isExtractionBuilding = ['MINE', 'OIL_WELL', 'GAS_WELL'].includes(selectedCell?.building?.code ?? '');
 
-  const openHubSection = useCallback((mainSection: MainSection, section: GeoHubSection, nextMessage?: string) => {
-    setActiveMainSection(mainSection);
-    setHubSection(section);
-    setShowGeology(true);
+  const openSection = useCallback((section: GameplaySection, nextMessage?: string) => {
+    setActiveMainSection(section);
     setSheetExpanded(true);
     if (nextMessage) setMessage(nextMessage);
   }, []);
 
+  const selectCell = useCallback((h3Index: string) => {
+    const cell = world?.cells.find((item) => item.h3Index === h3Index) ?? null;
+    if (!cell) return;
+    playClick();
+    setSelectedCell(cell);
+    setActiveMainSection('map');
+    setSheetExpanded(false);
+  }, [playClick, world]);
+
+  const showMapSummary = activeMainSection === 'map' && !sheetExpanded;
+  const showBottomCard = activeMainSection !== 'map' || sheetExpanded;
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" translucent={false} backgroundColor="#071018" />
+
       <Map style={styles.map} mapStyle={MAP_STYLE_URL}>
         <Camera center={[position.lng, position.lat]} zoom={MAP_ZOOM} />
 
         <GeoJSONSource id="scan-range-preview" data={scanRangeGeoJson}>
-          <Layer id="scan-range-fill" type="fill" paint={{ 'fill-color': '#38d8ff', 'fill-opacity': 0.04 } as never} />
-          <Layer id="scan-range-outline" type="line" paint={{ 'line-color': '#21cce8', 'line-width': 1.5, 'line-opacity': 0.72 } as never} />
+          <Layer
+            id="scan-range-fill"
+            type="fill"
+            paint={{ 'fill-color': '#38d8ff', 'fill-opacity': 0.035 } as never}
+          />
+          <Layer
+            id="scan-range-outline"
+            type="line"
+            paint={{ 'line-color': '#21cce8', 'line-width': 1.4, 'line-opacity': 0.64 } as never}
+          />
         </GeoJSONSource>
 
         <GeoJSONSource
@@ -392,13 +488,7 @@ export default function AppSectioned() {
           data={cellsGeoJson}
           onPress={(event) => {
             const h3Index = String(event.nativeEvent.features?.[0]?.properties?.h3Index ?? '');
-            const cell = world?.cells.find((item) => item.h3Index === h3Index) ?? null;
-            if (cell) {
-              setSelectedCell(cell);
-              setShowGeology(false);
-              setActiveMainSection('map');
-              setSheetExpanded(false);
-            }
+            if (h3Index) selectCell(h3Index);
           }}
         >
           <Layer
@@ -407,11 +497,22 @@ export default function AppSectioned() {
             paint={{
               'fill-color': [
                 'case',
-                ['==', ['get', 'current'], 1], '#e3ad38',
-                ['==', ['get', 'occupied'], 1], '#d04b4b',
-                '#12a98b',
+                ['==', ['get', 'hasBuilding'], 1], '#8d6a20',
+                ['==', ['get', 'ownerKind'], 'mine'], '#0a8074',
+                ['==', ['get', 'ownerKind'], 'rival'], '#a83f4e',
+                ['==', ['get', 'current'], 1], '#c69d37',
+                '#0c5660',
               ],
-              'fill-opacity': settings.showCellGrid ? ['case', ['==', ['get', 'selected'], 1], 0.42, 0.12] : 0,
+              'fill-opacity': settings.showCellGrid
+                ? [
+                  'case',
+                  ['==', ['get', 'selected'], 1], 0.46,
+                  ['==', ['get', 'hasBuilding'], 1], 0.3,
+                  ['!=', ['get', 'ownerKind'], 'free'], 0.2,
+                  ['==', ['get', 'current'], 1], 0.15,
+                  0.07,
+                ]
+                : 0,
             } as never}
           />
           <Layer
@@ -420,38 +521,131 @@ export default function AppSectioned() {
             paint={{
               'line-color': [
                 'case',
-                ['==', ['get', 'selected'], 1], '#ffd253',
+                ['==', ['get', 'selected'], 1], '#fff0a6',
+                ['==', ['get', 'hasBuilding'], 1], '#f4bd42',
+                ['==', ['get', 'ownerKind'], 'mine'], '#35df9e',
+                ['==', ['get', 'ownerKind'], 'rival'], '#f05f65',
                 ['==', ['get', 'current'], 1], '#ffc13d',
-                ['==', ['get', 'occupied'], 1], '#ed5959',
-                '#00a995',
+                '#148b91',
               ],
-              'line-width': settings.showCellGrid ? ['case', ['==', ['get', 'selected'], 1], 3.6, 1.8] : 0,
-              'line-opacity': settings.showCellGrid ? 0.95 : 0,
+              'line-width': settings.showCellGrid
+                ? [
+                  'case',
+                  ['==', ['get', 'selected'], 1], 3.5,
+                  ['==', ['get', 'hasBuilding'], 1], 2.5,
+                  ['!=', ['get', 'ownerKind'], 'free'], 2,
+                  1.25,
+                ]
+                : 0,
+              'line-opacity': settings.showCellGrid ? 0.92 : 0,
+            } as never}
+          />
+        </GeoJSONSource>
+
+        <GeoJSONSource id="territory-status-markers" data={statusMarkersGeoJson}>
+          <Layer
+            id="territory-status-halo"
+            type="circle"
+            paint={{
+              'circle-radius': [
+                'case',
+                ['==', ['get', 'hasBuilding'], 1], 13,
+                9,
+              ],
+              'circle-color': [
+                'case',
+                ['==', ['get', 'hasBuilding'], 1], '#f4bd42',
+                ['==', ['get', 'ownerKind'], 'mine'], '#35df9e',
+                '#f05f65',
+              ],
+              'circle-opacity': 0.16,
+              'circle-blur': 0.25,
+            } as never}
+          />
+          <Layer
+            id="territory-status-core"
+            type="circle"
+            paint={{
+              'circle-radius': [
+                'case',
+                ['==', ['get', 'hasBuilding'], 1], 6.5,
+                4.5,
+              ],
+              'circle-color': [
+                'case',
+                ['==', ['get', 'hasBuilding'], 1], '#f4bd42',
+                ['==', ['get', 'ownerKind'], 'mine'], '#35df9e',
+                '#f05f65',
+              ],
+              'circle-opacity': 0.92,
+              'circle-stroke-color': '#071018',
+              'circle-stroke-width': 2,
+            } as never}
+          />
+          <Layer
+            id="territory-status-center"
+            type="circle"
+            paint={{
+              'circle-radius': 1.8,
+              'circle-color': '#ffffff',
+              'circle-opacity': 0.9,
             } as never}
           />
         </GeoJSONSource>
 
         <GeoJSONSource id="scan-coverage-preview" data={scanCoverageGeoJson}>
-          <Layer id="scan-coverage-fill" type="fill" paint={{ 'fill-color': '#2dcdf4', 'fill-opacity': scanning ? 0.24 : 0.07 } as never} />
-          <Layer id="scan-coverage-outline" type="line" paint={{ 'line-color': '#60e6ff', 'line-width': scanning ? 3 : 1.5, 'line-opacity': 0.72 } as never} />
+          <Layer
+            id="scan-coverage-fill"
+            type="fill"
+            paint={{ 'fill-color': '#2dcdf4', 'fill-opacity': scanning ? 0.24 : 0.065 } as never}
+          />
+          <Layer
+            id="scan-coverage-outline"
+            type="line"
+            paint={{ 'line-color': '#60e6ff', 'line-width': scanning ? 3 : 1.5, 'line-opacity': 0.72 } as never}
+          />
         </GeoJSONSource>
 
-        <GeologyHeatmapLayer scan={scan} resourceCode={selectedHeatResource} visible={settings.showResourceOverlay} />
+        <GeologyHeatmapLayer
+          scan={scan}
+          resourceCode={selectedHeatResource}
+          visible={settings.showResourceOverlay}
+        />
 
         <GeoJSONSource id="player-position" data={playerGeoJson}>
-          <Layer id="player-halo" type="circle" paint={{ 'circle-radius': 15, 'circle-color': '#0a0f16', 'circle-opacity': 0.5 } as never} />
-          <Layer id="player-dot" type="circle" paint={{ 'circle-radius': 6, 'circle-color': '#38d8ff', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } as never} />
+          <Layer
+            id="player-halo"
+            type="circle"
+            paint={{ 'circle-radius': 15, 'circle-color': '#0a0f16', 'circle-opacity': 0.5 } as never}
+          />
+          <Layer
+            id="player-dot"
+            type="circle"
+            paint={{
+              'circle-radius': 6,
+              'circle-color': '#38d8ff',
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2,
+            } as never}
+          />
         </GeoJSONSource>
       </Map>
 
-      <SafeAreaView pointerEvents="box-none" style={[styles.overlay, { paddingTop: safeTop, paddingBottom: safeBottom }]} edges={[]}>
+      <SafeAreaView
+        pointerEvents="box-none"
+        style={[styles.overlay, { paddingTop: safeTop, paddingBottom: safeBottom }]}
+        edges={[]}
+      >
         <View style={styles.resourceBar}>
           <ResourceHud inventory={inventory} />
           {loadingWorld ? <ActivityIndicator size="small" color="#38d8ff" style={styles.resourceLoading} /> : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Настройки игры"
-            onPress={() => { playClick(); setSettingsOpen(true); }}
+            onPress={() => {
+              playClick();
+              setSettingsOpen(true);
+            }}
             style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}
           >
             <Image source={gameAssets.nav.settings} style={styles.settingsButtonImage} resizeMode="contain" />
@@ -459,11 +653,20 @@ export default function AppSectioned() {
         </View>
 
         {settings.showResourceOverlay ? (
-          <HeatmapResourceSelector scan={scan} selectedCode={selectedHeatResource} onSelect={setSelectedHeatResource} />
+          <HeatmapResourceSelector
+            scan={scan}
+            selectedCode={selectedHeatResource}
+            onSelect={setSelectedHeatResource}
+          />
         ) : null}
 
+        {activeMainSection === 'map' ? <MapStatusLegend /> : null}
+
         {message ? (
-          <Pressable onPress={() => setMessage('')} style={({ pressed }) => [styles.statusToast, pressed && styles.pressed]}>
+          <Pressable
+            onPress={() => setMessage('')}
+            style={({ pressed }) => [styles.statusToast, pressed && styles.pressed]}
+          >
             <Text style={styles.statusToastText} numberOfLines={2}>{message}</Text>
           </Pressable>
         ) : null}
@@ -472,73 +675,123 @@ export default function AppSectioned() {
           <MapToolButton
             source={gameAssets.utility.center}
             accessibilityLabel="Моё местоположение"
-            onPress={() => { playClick(); void refreshWorld(position, selectedCell?.h3Index); }}
+            onPress={() => {
+              playClick();
+              void refreshWorld(position, selectedCell?.h3Index);
+            }}
           />
           <MapToolButton
             source={gameAssets.utility.layers}
             accessibilityLabel="Сетка участков"
             active={settings.showCellGrid}
-            onPress={() => { playClick(); updateSetting('showCellGrid', !settings.showCellGrid); }}
+            onPress={() => {
+              playClick();
+              updateSetting('showCellGrid', !settings.showCellGrid);
+            }}
           />
           <MapToolButton
             source={gameAssets.utility.filter}
             accessibilityLabel="Тепловая карта ресурсов"
             active={settings.showResourceOverlay}
-            onPress={() => { playClick(); updateSetting('showResourceOverlay', !settings.showResourceOverlay); }}
+            onPress={() => {
+              playClick();
+              updateSetting('showResourceOverlay', !settings.showResourceOverlay);
+            }}
           />
         </View>
 
         <View style={styles.spacer} />
+
+        {showMapSummary ? (
+          <StrategicCellSummary
+            cell={selectedCell}
+            playerId={DEMO_PLAYER_ID}
+            deposits={depositsInSelectedCell}
+            extraction={extraction}
+            scanning={scanning}
+            busy={action !== null}
+            claimCost={CLAIM_COST}
+            onScan={() => void runScan()}
+            onClaim={() => void claimSelected()}
+            onDevelop={() => openSection('development', 'Выберите подтверждённую залежь и рассчитайте проект разработки')}
+            onExpand={() => setSheetExpanded(true)}
+          />
+        ) : null}
 
         <BottomNavigation
           activeSection={activeMainSection}
           onMap={() => {
             playClick();
             setActiveMainSection('map');
-            setShowGeology(false);
             setSheetExpanded(false);
             void refreshCapabilities();
           }}
-          onExploration={() => { playClick(); openHubSection('exploration', 'deposits'); }}
-          onDevelopment={() => { playClick(); openHubSection('development', 'deposits'); }}
-          onTrade={() => { playClick(); openHubSection('trade', 'market'); }}
-          onTechnology={() => { playClick(); openHubSection('technology', 'geology'); }}
+          onExploration={() => {
+            playClick();
+            openSection('exploration');
+          }}
+          onDevelopment={() => {
+            playClick();
+            openSection('development');
+          }}
+          onTrade={() => {
+            playClick();
+            openSection('trade');
+          }}
+          onTechnology={() => {
+            playClick();
+            openSection('technology');
+          }}
         />
 
-        <View style={[styles.bottomCard, sheetExpanded && styles.bottomCardExpanded]}>
-          <Pressable onPress={() => setSheetExpanded((value) => !value)} style={({ pressed }) => [styles.sheetHandleArea, pressed && styles.pressed]}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetHint}>{sheetExpanded ? 'Свернуть панель' : 'Развернуть панель участка'}</Text>
-          </Pressable>
+        {showBottomCard ? (
+          <View style={[styles.bottomCard, sheetExpanded && styles.bottomCardExpanded]}>
+            <Pressable
+              onPress={() => setSheetExpanded((value) => !value)}
+              style={({ pressed }) => [styles.sheetHandleArea, pressed && styles.pressed]}
+            >
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetHint}>
+                {activeMainSection === 'map'
+                  ? (sheetExpanded ? 'Свернуть детали участка' : 'Развернуть детали участка')
+                  : 'Игровой раздел'}
+              </Text>
+            </Pressable>
 
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {showGeology && activeMainSection !== 'map' ? (
-              <MainSectionPanel
-                key={`${activeMainSection}-${hubSection}`}
-                section={activeMainSection}
-                onMessage={setMessage}
-              />
-            ) : (
-              <TerritoryPanel
-                selectedCell={selectedCell}
-                ownedByPlayer={ownedByPlayer}
-                isExtractionBuilding={isExtractionBuilding}
-                action={action}
-                scanning={scanning}
-                loadingExtraction={loadingExtraction}
-                extraction={extraction}
-                scan={scan}
-                scanCapabilities={effectiveCapabilities}
-                depositsInSelectedCell={depositsInSelectedCell}
-                onClaim={() => void claimSelected()}
-                onScan={() => void runScan()}
-                onOpenDevelopment={() => openHubSection('development', 'deposits', 'Выберите подтверждённую залежь и рассчитайте проект разработки')}
-                onCollect={() => void collectResources()}
-                onStartExtraction={(depositId) => void beginExtraction(depositId)}
-              />
-            )}
-          </ScrollView>
-        </View>
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {activeMainSection !== 'map' ? (
+                <MainSectionPanel
+                  key={activeMainSection}
+                  section={activeMainSection}
+                  onMessage={setMessage}
+                />
+              ) : (
+                <TerritoryPanel
+                  selectedCell={selectedCell}
+                  ownedByPlayer={ownedByPlayer}
+                  isExtractionBuilding={isExtractionBuilding}
+                  action={action}
+                  scanning={scanning}
+                  loadingExtraction={loadingExtraction}
+                  extraction={extraction}
+                  scan={scan}
+                  scanCapabilities={effectiveCapabilities}
+                  depositsInSelectedCell={depositsInSelectedCell}
+                  claimCost={CLAIM_COST}
+                  onClaim={() => void claimSelected()}
+                  onScan={() => void runScan()}
+                  onOpenDevelopment={() => openSection('development', 'Выберите подтверждённую залежь и рассчитайте проект разработки')}
+                  onCollect={() => void collectResources()}
+                  onStartExtraction={(depositId) => void beginExtraction(depositId)}
+                />
+              )}
+            </ScrollView>
+          </View>
+        ) : null}
       </SafeAreaView>
 
       <GameSettingsPanel
@@ -552,20 +805,68 @@ export default function AppSectioned() {
   );
 }
 
-function MapToolButton({ source, onPress, accessibilityLabel, active = false }: { source: ImageSourcePropType; onPress: () => void; accessibilityLabel: string; active?: boolean }) {
+function MapStatusLegend() {
+  return (
+    <View style={styles.mapLegend} pointerEvents="none">
+      <LegendItem color="#148b91" label="свободно" />
+      <LegendItem color="#35df9e" label="наше" />
+      <LegendItem color="#f05f65" label="конкурент" />
+      <LegendItem color="#f4bd42" label="объект" />
+    </View>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+function MapToolButton({
+  source,
+  onPress,
+  accessibilityLabel,
+  active = false,
+}: {
+  source: ImageSourcePropType;
+  onPress: () => void;
+  accessibilityLabel: string;
+  active?: boolean;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      style={({ pressed }) => [styles.mapToolButton, active && styles.mapToolButtonActive, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.mapToolButton,
+        active && styles.mapToolButtonActive,
+        pressed && styles.pressed,
+      ]}
     >
       <Image source={source} style={styles.mapToolImage} resizeMode="contain" />
     </Pressable>
   );
 }
 
-function BottomNavigation({ activeSection, onMap, onExploration, onDevelopment, onTrade, onTechnology }: { activeSection: MainSection; onMap: () => void; onExploration: () => void; onDevelopment: () => void; onTrade: () => void; onTechnology: () => void }) {
+function BottomNavigation({
+  activeSection,
+  onMap,
+  onExploration,
+  onDevelopment,
+  onTrade,
+  onTechnology,
+}: {
+  activeSection: MainSection;
+  onMap: () => void;
+  onExploration: () => void;
+  onDevelopment: () => void;
+  onTrade: () => void;
+  onTechnology: () => void;
+}) {
   return (
     <View style={styles.bottomNav}>
       <BottomNavButton source={gameAssets.nav.map} active={activeSection === 'map'} onPress={onMap} />
@@ -577,112 +878,25 @@ function BottomNavigation({ activeSection, onMap, onExploration, onDevelopment, 
   );
 }
 
-function BottomNavButton({ source, active = false, onPress }: { source: ImageSourcePropType; active?: boolean; onPress: () => void }) {
+function BottomNavButton({
+  source,
+  active = false,
+  onPress,
+}: {
+  source: ImageSourcePropType;
+  active?: boolean;
+  onPress: () => void;
+}) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.bottomNavButton, active && styles.bottomNavButtonActive, pressed && styles.pressed]}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.bottomNavButton,
+        active && styles.bottomNavButtonActive,
+        pressed && styles.pressed,
+      ]}
+    >
       <Image source={source} style={styles.bottomNavImage} resizeMode="contain" />
-    </Pressable>
-  );
-}
-
-function TerritoryPanel({ selectedCell, ownedByPlayer, isExtractionBuilding, action, scanning, loadingExtraction, extraction, scan, scanCapabilities, depositsInSelectedCell, onClaim, onScan, onOpenDevelopment, onCollect, onStartExtraction }: { selectedCell: WorldCell | null; ownedByPlayer: boolean; isExtractionBuilding: boolean; action: Action; scanning: boolean; loadingExtraction: boolean; extraction: ExtractionStatus | null; scan: GeologyScanResponse | null; scanCapabilities: GeologyCapabilities | null; depositsInSelectedCell: GeologyScanResponse['deposits']; onClaim: () => void; onScan: () => void; onOpenDevelopment: () => void; onCollect: () => void; onStartExtraction: (depositId: string) => void }) {
-  const previewCellCount = scanCapabilities ? 1 + 3 * scanCapabilities.coverageRing * (scanCapabilities.coverageRing + 1) : 1;
-  const canClaim = Boolean(selectedCell && !selectedCell.claim && scan && depositsInSelectedCell.length > 0);
-  const canPlan = Boolean(selectedCell && ownedByPlayer && !selectedCell.building && depositsInSelectedCell.length > 0);
-
-  return (
-    <>
-      <View style={styles.rowBetween}>
-        <View style={styles.flex}>
-          <Text style={styles.eyebrow}>ВЫБРАННЫЙ УЧАСТОК</Text>
-          <Text style={styles.cellTitle} numberOfLines={1}>{selectedCell?.h3Index ?? 'Выберите ячейку на карте'}</Text>
-        </View>
-        <View style={[styles.badge, selectedCell?.occupied ? styles.badgeBusy : styles.badgeFree]}>
-          <Text style={styles.badgeText}>{selectedCell?.occupied ? 'ЗАНЯТО' : 'СВОБОДНО'}</Text>
-        </View>
-      </View>
-
-      {selectedCell?.building ? (
-        <View style={styles.infoBox}>
-          <Text style={styles.infoTitle}>{selectedCell.building.name ?? selectedCell.building.code}</Text>
-          <Text style={styles.infoText}>Уровень: {selectedCell.building.level ?? 1} · статус: {selectedCell.building.status ?? '—'}</Text>
-        </View>
-      ) : selectedCell?.claim ? (
-        <Text style={styles.infoText}>{ownedByPlayer ? 'Участок вашей компании. Подготовьте проект разработки подтверждённой залежи.' : 'Территория принадлежит другой компании.'}</Text>
-      ) : (
-        <Text style={styles.infoText}>{scan ? 'Залежь найдена - теперь можно арендовать перспективный участок.' : 'Сначала проведите георазведку. Аренда участка открывается после обнаружения залежи.'}</Text>
-      )}
-
-      {selectedCell && scanCapabilities ? (
-        <View style={styles.scanPreviewBox}>
-          <Text style={styles.scanPreviewTitle}>ЗОНА ГЕОРАЗВЕДКИ</Text>
-          <Text style={styles.scanPreviewText}>Цель: {formatNumber(scanCapabilities.rangeMeters)} м · охват: {previewCellCount} яч. · глубина: {formatNumber(scanCapabilities.maxDepthMeters)} м · точность: {Math.round((1 - scanCapabilities.accuracyError) * 100)}%</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.actionGrid}>
-        <ActionButton busy={scanning} disabled={scanning || !selectedCell || action !== null} label="ПРОВЕСТИ ГЕОРАЗВЕДКУ" tone="cyan" onPress={onScan} />
-        {canClaim ? <ActionButton busy={action === 'claim'} disabled={action !== null} label={`АРЕНДОВАТЬ · ${formatNumber(CLAIM_COST)} ₡`} tone="green" onPress={onClaim} /> : null}
-        {canPlan ? <ActionButton busy={false} disabled={action !== null} label="ПРОЕКТ РАЗРАБОТКИ" tone="amber" onPress={onOpenDevelopment} /> : null}
-      </View>
-
-      {loadingExtraction ? <View style={styles.inlineLoading}><ActivityIndicator size="small" color="#38d8ff" /><Text style={styles.infoText}>Проверка добычи…</Text></View> : null}
-
-      {ownedByPlayer && isExtractionBuilding && extraction ? (
-        <View style={styles.productionCard}>
-          <View style={styles.rowBetween}>
-            <View style={styles.productionTitleRow}>
-              <Image source={resourceIconForCode(extraction.deposit.resource.code)} style={styles.depositIcon} resizeMode="contain" />
-              <View><Text style={styles.eyebrow}>ДОБЫЧА</Text><Text style={styles.infoTitle}>{extraction.deposit.resource.name}</Text></View>
-            </View>
-            <Text style={styles.productionRate}>{formatNumber(extraction.ratePerHour, 2)} {extraction.deposit.resource.unit}/ч</Text>
-          </View>
-          <Text style={styles.infoText}>Накоплено: {formatNumber(extraction.availableToCollect, 2)} {extraction.deposit.resource.unit}</Text>
-          <Text style={styles.infoText}>Остаток: {formatNumber(extraction.deposit.quantityRemaining, 2)} {extraction.deposit.resource.unit}</Text>
-          {extraction.economics?.source === 'development_project' ? <Text style={styles.operatingCost}>OPEX к оплате: {formatNumber(extraction.economics.operatingCostDue ?? 0)} ₡</Text> : null}
-          <ActionButton busy={action === 'collect'} disabled={action !== null || extraction.availableToCollect <= 0} label={`ЗАБРАТЬ · ${formatNumber(extraction.availableToCollect, 2)} ${extraction.deposit.resource.unit}`} tone="green" onPress={onCollect} />
-        </View>
-      ) : null}
-
-      {scan ? (
-        <View style={styles.scanResults}>
-          <View style={styles.statsRow}>
-            <Stat value={`${scan.capabilities.maxDepthMeters} м`} label="глубина" />
-            <Stat value={`${scan.capabilities.scannedCellCount}`} label="ячеек" />
-            <Stat value={`${Math.round(scan.capabilities.confidence * 100)}%`} label="достоверность" />
-          </View>
-          <Text style={styles.scanMeta}>Выберите ресурс в строке «Плотность» над картой - цвет покажет насыщенность залежи.</Text>
-          {scan.deposits.length ? scan.deposits.map((deposit) => {
-            const canStartHere = ownedByPlayer && isExtractionBuilding && !extraction && deposit.h3Index === selectedCell?.h3Index;
-            return (
-              <View key={deposit.id} style={styles.depositCard}>
-                <View style={styles.depositHeader}>
-                  <Image source={resourceIconForCode(deposit.resource.code)} style={styles.depositIcon} resizeMode="contain" />
-                  <View style={styles.flex}>
-                    <Text style={styles.depositName}>{deposit.resource.name}</Text>
-                    <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters)}–{formatNumber(deposit.estimates.depthToMeters)} м</Text>
-                    <Text style={styles.depositText}>Плотность: {Math.round(deposit.estimates.density.value * 100)}% · запасы: {formatNumber(deposit.estimates.quantity.min)}–{formatNumber(deposit.estimates.quantity.max)} {deposit.resource.unit}</Text>
-                  </View>
-                  <Text style={styles.rarity}>R{deposit.resource.rarity}</Text>
-                </View>
-                {canStartHere ? <ActionButton busy={action === 'extract'} disabled={action !== null} label="ЗАПУСТИТЬ ДОБЫЧУ" tone="amber" onPress={() => onStartExtraction(deposit.id)} /> : null}
-              </View>
-            );
-          }) : <Text style={styles.emptyText}>Данные по залежам на текущей глубине не получены. Улучшите глубину или чувствительность.</Text>}
-        </View>
-      ) : null}
-    </>
-  );
-}
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>;
-}
-
-function ActionButton({ busy, disabled, label, tone = 'cyan', onPress }: { busy: boolean; disabled: boolean; label: string; tone?: 'cyan' | 'green' | 'amber'; onPress: () => void }) {
-  return (
-    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.actionButton, tone === 'green' && styles.actionButtonGreen, tone === 'amber' && styles.actionButtonAmber, disabled && styles.disabled, pressed && styles.pressed]}>
-      {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.actionButtonText}>{label}</Text>}
     </Pressable>
   );
 }
@@ -693,65 +907,117 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#07111a' },
   map: { ...absolute },
   overlay: { ...absolute, paddingHorizontal: 8 },
-  flex: { flex: 1 },
   resourceBar: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 5, zIndex: 30 },
   resourceLoading: { marginHorizontal: 2 },
-  settingsButton: { width: 42, height: 42, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(5,16,25,0.94)', borderWidth: 1, borderColor: 'rgba(73,170,210,0.24)' },
+  settingsButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(5,16,25,0.94)',
+    borderWidth: 1,
+    borderColor: 'rgba(73,170,210,0.24)',
+  },
   settingsButtonImage: { width: '100%', height: '100%' },
-  statusToast: { alignSelf: 'flex-start', maxWidth: '84%', marginTop: 4, minHeight: 25, justifyContent: 'center', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 9, backgroundColor: 'rgba(5,16,25,0.9)', borderWidth: 1, borderColor: 'rgba(56,216,255,0.18)' },
+  mapLegend: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    paddingHorizontal: 7,
+    minHeight: 24,
+    borderRadius: 9,
+    backgroundColor: 'rgba(4,14,22,0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  legendDot: { width: 6, height: 6, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' },
+  legendText: { color: '#718995', fontSize: 5.9, fontWeight: '800' },
+  statusToast: {
+    alignSelf: 'flex-start',
+    maxWidth: '84%',
+    marginTop: 4,
+    minHeight: 25,
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 9,
+    backgroundColor: 'rgba(5,16,25,0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.18)',
+  },
   statusToastText: { color: '#b8cbd3', fontSize: 8.5, lineHeight: 11 },
   mapTools: { position: 'absolute', right: 8, gap: 5 },
-  mapToolButton: { width: 38, height: 38, borderRadius: 10, overflow: 'hidden', backgroundColor: 'rgba(5,16,25,0.9)', shadowColor: '#000000', shadowOpacity: 0.32, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 7 },
-  mapToolButtonActive: { borderWidth: 1, borderColor: 'rgba(56,216,255,0.85)', shadowColor: '#38d8ff', shadowOpacity: 0.45 },
+  mapToolButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(5,16,25,0.9)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.32,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 7,
+  },
+  mapToolButtonActive: {
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.85)',
+    shadowColor: '#38d8ff',
+    shadowOpacity: 0.45,
+  },
   mapToolImage: { width: '100%', height: '100%' },
   spacer: { flex: 1 },
-  bottomNav: { flexDirection: 'row', justifyContent: 'center', gap: 3, marginBottom: 3, paddingHorizontal: 4 },
-  bottomNavButton: { flex: 1, maxWidth: 60, height: 48, borderRadius: 11, overflow: 'hidden', opacity: 0.78, backgroundColor: 'rgba(5,16,25,0.92)', borderWidth: 1, borderColor: 'rgba(73,170,210,0.16)' },
-  bottomNavButtonActive: { opacity: 1, borderColor: 'rgba(56,216,255,0.8)', shadowColor: '#38d8ff', shadowOpacity: 0.42, shadowRadius: 6, elevation: 7 },
+  bottomNav: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 3,
+    marginTop: 4,
+    marginBottom: 3,
+    paddingHorizontal: 4,
+  },
+  bottomNavButton: {
+    flex: 1,
+    maxWidth: 60,
+    height: 48,
+    borderRadius: 11,
+    overflow: 'hidden',
+    opacity: 0.78,
+    backgroundColor: 'rgba(5,16,25,0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(73,170,210,0.16)',
+  },
+  bottomNavButtonActive: {
+    opacity: 1,
+    borderColor: 'rgba(56,216,255,0.8)',
+    shadowColor: '#38d8ff',
+    shadowOpacity: 0.42,
+    shadowRadius: 6,
+    elevation: 7,
+  },
   bottomNavImage: { width: '100%', height: '100%' },
-  bottomCard: { maxHeight: '23%', minHeight: 116, marginBottom: 2, overflow: 'hidden', backgroundColor: 'rgba(5,16,25,0.97)', borderRadius: 17, borderWidth: 1, borderColor: 'rgba(56,216,255,0.24)', shadowColor: '#000000', shadowOpacity: 0.38, shadowRadius: 11, shadowOffset: { width: 0, height: -3 }, elevation: 9 },
-  bottomCardExpanded: { maxHeight: '54%' },
+  bottomCard: {
+    maxHeight: '25%',
+    minHeight: 116,
+    marginBottom: 2,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(5,16,25,0.97)',
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.24)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.38,
+    shadowRadius: 11,
+    shadowOffset: { width: 0, height: -3 },
+    elevation: 9,
+  },
+  bottomCardExpanded: { maxHeight: '58%' },
   sheetHandleArea: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
   sheetHandle: { width: 50, height: 4, borderRadius: 3, backgroundColor: '#3f7890' },
   sheetHint: { color: '#6e8798', fontSize: 7.5, marginTop: 2 },
   scroll: { flexGrow: 0 },
   scrollContent: { paddingHorizontal: 11, paddingTop: 3, paddingBottom: 10 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  eyebrow: { color: '#6e91a8', fontSize: 8, letterSpacing: 1.1, fontWeight: '800' },
-  cellTitle: { color: '#f4f9fc', fontSize: 11.5, fontWeight: '800', marginTop: 2 },
-  badge: { borderRadius: 18, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1 },
-  badgeBusy: { backgroundColor: 'rgba(184,58,58,0.18)', borderColor: 'rgba(243,95,95,0.45)' },
-  badgeFree: { backgroundColor: 'rgba(28,123,110,0.18)', borderColor: 'rgba(33,215,168,0.42)' },
-  badgeText: { color: '#f1f8fb', fontSize: 8, fontWeight: '900', letterSpacing: 0.6 },
-  infoBox: { marginTop: 7, padding: 8, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
-  infoTitle: { color: '#f4c957', fontSize: 12, fontWeight: '800' },
-  infoText: { color: '#b6c3cc', fontSize: 9.5, lineHeight: 13, marginTop: 4 },
-  scanPreviewBox: { marginTop: 7, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 9, backgroundColor: 'rgba(20,93,113,0.17)', borderWidth: 1, borderColor: 'rgba(56,216,255,0.18)' },
-  scanPreviewTitle: { color: '#45d9f2', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
-  scanPreviewText: { color: '#9eb8c3', fontSize: 8.5, lineHeight: 12, marginTop: 2 },
-  actionGrid: { marginTop: 2 },
-  actionButton: { marginTop: 6, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 10, backgroundColor: '#08394a', borderWidth: 1, borderColor: '#27cce9' },
-  actionButtonGreen: { backgroundColor: '#0b472e', borderColor: '#31df8b' },
-  actionButtonAmber: { backgroundColor: '#4e350b', borderColor: '#f4b53c' },
-  actionButtonText: { color: '#f7fbfd', fontSize: 9.5, fontWeight: '900', letterSpacing: 0.45 },
-  disabled: { opacity: 0.42 },
   pressed: { opacity: 0.74, transform: [{ scale: 0.985 }] },
-  inlineLoading: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  productionCard: { marginTop: 9, padding: 9, borderRadius: 11, backgroundColor: 'rgba(9,51,64,0.5)', borderWidth: 1, borderColor: 'rgba(56,216,255,0.26)' },
-  productionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  productionRate: { color: '#47e5bc', fontSize: 9.5, fontWeight: '900' },
-  operatingCost: { color: '#f5c451', fontSize: 8.5, fontWeight: '900', marginTop: 4 },
-  scanResults: { marginTop: 9 },
-  scanMeta: { color: '#75909d', fontSize: 8.5, lineHeight: 12, marginBottom: 4 },
-  statsRow: { flexDirection: 'row', gap: 6, marginBottom: 7 },
-  stat: { flex: 1, padding: 7, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(56,216,255,0.09)' },
-  statValue: { color: '#38d8ff', fontSize: 11, fontWeight: '800' },
-  statLabel: { color: '#879baa', fontSize: 7.5, marginTop: 2 },
-  depositCard: { marginTop: 6, padding: 8, borderRadius: 10, backgroundColor: 'rgba(13,56,63,0.58)', borderWidth: 1, borderColor: 'rgba(33,215,168,0.24)' },
-  depositHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  depositIcon: { width: 40, height: 40 },
-  depositName: { color: '#f3f7fa', fontSize: 11, fontWeight: '800' },
-  rarity: { color: '#f5c451', fontSize: 8.5, fontWeight: '900' },
-  depositText: { color: '#aebcc6', fontSize: 8.5, marginTop: 2 },
-  emptyText: { color: '#91a5b2', fontSize: 9.5, marginTop: 7 },
 });
