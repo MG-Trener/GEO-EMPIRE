@@ -3,11 +3,21 @@
     "name": "GEO EMPIRE",
     "slug": "geo-empire",
     "scheme": "geoempire",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "backgroundColor": "#0a0f16",
+    "backgroundColor": "#071018",
+    "icon": "./assets/images/sheet_ru_2/sheet_ru_2_element_028.png",
+    "androidStatusBar": {
+      "backgroundColor": "#071018",
+      "barStyle": "light-content",
+      "translucent": false
+    },
+    "androidNavigationBar": {
+      "backgroundColor": "#071018",
+      "barStyle": "light-content"
+    },
     "plugins": [
       "@maplibre/maplibre-react-native",
       [
@@ -20,7 +30,12 @@
     ],
     "android": {
       "package": "kz.geoempire.game",
-      "versionCode": 4,
+      "versionCode": 5,
+      "backgroundColor": "#071018",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/sheet_ru_2/sheet_ru_2_element_028.png",
+        "backgroundColor": "#071018"
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
