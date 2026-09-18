@@ -13,15 +13,19 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import App from '../App';
 import { AppUpdateBanner } from './AppUpdateBanner';
-import { bootstrapPlayer, getApiUrl, setActivePlayerId } from './api';
+import { bootstrapPlayer, getApiUrl, resetPlayerForTesting, setActivePlayerId } from './api';
 import { FirstMissionGuide } from './FirstMissionGuide';
 import { gameAssets } from './gameAssets';
 import type { PlayerSummary } from './types';
 
 type Stage = 'loading' | 'create' | 'created' | 'ready';
+
+const TEST_RESET_VERSION = '0.2.3';
+const TEST_RESET_STORAGE_KEY = `geo-empire.test-reset.${TEST_RESET_VERSION}`;
 
 async function getInstallationSubject(): Promise<string> {
   if (Platform.OS === 'android') {
@@ -40,6 +44,16 @@ async function getInstallationSubject(): Promise<string> {
   return `install:${Application.applicationId ?? 'geo-empire'}:${installedAt?.getTime() ?? 'unknown'}`;
 }
 
+async function applyOneTimeTesterReset(authSubject: string) {
+  if (Application.nativeApplicationVersion !== TEST_RESET_VERSION) return null;
+  const completed = await AsyncStorage.getItem(TEST_RESET_STORAGE_KEY).catch(() => null);
+  if (completed === 'done') return null;
+
+  const reset = await resetPlayerForTesting(authSubject);
+  await AsyncStorage.setItem(TEST_RESET_STORAGE_KEY, 'done').catch(() => undefined);
+  return reset;
+}
+
 export function OnboardingGate() {
   const [stage, setStage] = useState<Stage>('loading');
   const [authSubject, setAuthSubject] = useState('');
@@ -47,6 +61,7 @@ export function OnboardingGate() {
   const [companyName, setCompanyName] = useState('');
   const [player, setPlayer] = useState<PlayerSummary | null>(null);
   const [starterGrant, setStarterGrant] = useState<{ soft: number; premium: number } | null>(null);
+  const [testerResourceGrant, setTesterResourceGrant] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -60,9 +75,24 @@ export function OnboardingGate() {
         try {
           const result = await bootstrapPlayer({ authSubject: subject });
           if (cancelled) return;
-          setActivePlayerId(result.player.id);
-          setPlayer(result.player);
-          setStage('ready');
+
+          let resolvedPlayer = result.player;
+          let showCreated = false;
+          try {
+            const reset = await applyOneTimeTesterReset(subject);
+            if (reset) {
+              resolvedPlayer = reset.player;
+              setStarterGrant({ soft: reset.testGrant.soft, premium: reset.testGrant.premium });
+              setTesterResourceGrant(reset.testGrant.everyResource);
+              showCreated = true;
+            }
+          } catch (resetError) {
+            setError(`Тестовый сброс: ${resetError instanceof Error ? resetError.message : 'ошибка'}`);
+          }
+
+          setActivePlayerId(resolvedPlayer.id);
+          setPlayer(resolvedPlayer);
+          setStage(showCreated ? 'created' : 'ready');
         } catch (bootstrapError) {
           if (cancelled) return;
           const message = bootstrapError instanceof Error ? bootstrapError.message : 'unknown_error';
@@ -90,10 +120,24 @@ export function OnboardingGate() {
     setError('');
     try {
       const result = await bootstrapPlayer({ authSubject, displayName: cleanName, companyName: cleanCompany });
-      setActivePlayerId(result.player.id);
-      setPlayer(result.player);
-      setStarterGrant(result.starterGrant);
-      setStage(result.status === 'created' ? 'created' : 'ready');
+      let resolvedPlayer = result.player;
+      let grant = result.starterGrant;
+
+      try {
+        const reset = await applyOneTimeTesterReset(authSubject);
+        if (reset) {
+          resolvedPlayer = reset.player;
+          grant = { soft: reset.testGrant.soft, premium: reset.testGrant.premium };
+          setTesterResourceGrant(reset.testGrant.everyResource);
+        }
+      } catch (resetError) {
+        setError(`Компания создана, но тестовый сброс не выполнен: ${resetError instanceof Error ? resetError.message : 'ошибка'}`);
+      }
+
+      setActivePlayerId(resolvedPlayer.id);
+      setPlayer(resolvedPlayer);
+      setStarterGrant(grant);
+      setStage('created');
     } catch (createError) {
       setError(`Создание компании: ${createError instanceof Error ? createError.message : 'ошибка'}`);
     } finally {
@@ -125,7 +169,7 @@ export function OnboardingGate() {
                 <Text style={styles.logo}>GEO EMPIRE</Text>
               </View>
             </View>
-            <Text style={styles.subtitle}>Исследуйте реальную карту, находите месторождения, инвестируйте в разработку и стройте ресурсную компанию.</Text>
+            <Text style={styles.subtitle}>Исследуйте реальную карту, находите месторождения, подтверждайте геологию и стройте ресурсную компанию.</Text>
             <View style={styles.featureRow}>
               <Feature icon={gameAssets.nav.exploration} label="РАЗВЕДКА" />
               <Feature icon={gameAssets.nav.development} label="РАЗРАБОТКА" />
@@ -144,18 +188,22 @@ export function OnboardingGate() {
               <View style={styles.cardHeader}>
                 <Image source={gameAssets.utility.select} style={styles.cardIcon} resizeMode="contain" />
                 <View style={styles.flexGrow}>
-                  <Text style={styles.eyebrow}>КОМПАНИЯ ЗАРЕГИСТРИРОВАНА</Text>
+                  <Text style={styles.eyebrow}>{Application.nativeApplicationVersion === TEST_RESET_VERSION ? 'ТЕСТОВЫЙ СТАРТ 0.2.3' : 'КОМПАНИЯ ЗАРЕГИСТРИРОВАНА'}</Text>
                   <Text style={styles.cardTitle}>{player.companyName}</Text>
                 </View>
               </View>
               <Text style={styles.muted}>Руководитель: {player.displayName}</Text>
 
               <View style={styles.rewardBox}>
-                <View><Text style={styles.rewardLabel}>СТАРТОВЫЙ КАПИТАЛ</Text><Text style={styles.rewardSoft}>{(starterGrant?.soft ?? player.wallet.soft).toLocaleString('ru-RU')} ₡</Text></View>
-                <View style={styles.rewardRight}><Text style={styles.rewardLabel}>ПРЕМИУМ</Text><Text style={styles.rewardPremium}>+{(starterGrant?.premium ?? 0).toLocaleString('ru-RU')} ◆</Text></View>
+                <View><Text style={styles.rewardLabel}>КАПИТАЛ</Text><Text style={styles.rewardSoft}>{(starterGrant?.soft ?? player.wallet.soft).toLocaleString('ru-RU')} ₡</Text></View>
+                <View style={styles.rewardRight}><Text style={styles.rewardLabel}>PREMIUM</Text><Text style={styles.rewardPremium}>+{(starterGrant?.premium ?? player.wallet.premium).toLocaleString('ru-RU')} ◆</Text></View>
               </View>
 
-              <Text style={styles.instructions}>Первый этап: найдите себя на карте, выберите ближайшую свободную ячейку, проведите разведку и оформите первый участок.</Text>
+              {testerResourceGrant > 0 ? (
+                <Text style={styles.testGrant}>Для тестирования: по {testerResourceGrant.toLocaleString('ru-RU')} единиц каждого доступного ресурса на складе.</Text>
+              ) : null}
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <Text style={styles.instructions}>Первый цикл теперь проще: разведка → выбор залежи → аренда → проект разработки → добыча → продажа.</Text>
               <PrimaryButton label="НАЧАТЬ РАЗВЕДКУ" onPress={() => setStage('ready')} icon={gameAssets.nav.exploration} />
             </View>
           ) : (
@@ -231,6 +279,7 @@ const styles = StyleSheet.create({
   rewardLabel: { color: '#78a68c', fontSize: 7, fontWeight: '900', letterSpacing: 1.1 },
   rewardSoft: { color: '#f1c15b', fontSize: 22, fontWeight: '900', marginTop: 2 },
   rewardPremium: { color: '#b989dc', fontSize: 15, fontWeight: '900', marginTop: 3 },
+  testGrant: { color: '#70d7b8', fontSize: 9, lineHeight: 13, fontWeight: '700' },
   instructions: { color: '#aab9c2', fontSize: 10, lineHeight: 15 },
   error: { color: '#e58d78', fontSize: 10, lineHeight: 15 },
   button: { flexDirection: 'row', gap: 6, backgroundColor: '#d7a640', borderRadius: 11, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 3 },
