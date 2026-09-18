@@ -8,12 +8,12 @@ import { geologyRoutes } from './routes/geology.js';
 import { geologyScanRoutes } from './routes/geology-scan.js';
 import { geologyInvestigationRoutes } from './routes/geology-investigations.js';
 import { geologyKnownDepositRoutes } from './routes/geology-known-deposits.js';
-import { marketRoutes } from './routes/market.js';
+import { marketRoutesV2 } from './routes/market-v2.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { playerRoutes } from './routes/players.js';
 import { storeRoutes } from './routes/store.js';
 import { technologyRoutes } from './routes/technologies.js';
-import { territoryRoutes } from './routes/territories.js';
+import { territoryRoutesV2 } from './routes/territories-v2.js';
 import { worldRoutes } from './routes/world.js';
 
 const app = Fastify({ logger: true });
@@ -44,7 +44,6 @@ app.get('/health', async () => {
   const result = await db.query<{ now: string; database_name: string }>(
     'select now()::text as now, current_database() as database_name',
   );
-
   return {
     status: 'ok',
     service: 'geo-empire-api',
@@ -56,11 +55,8 @@ app.get('/health', async () => {
 app.get('/ready', async (_request, reply) => {
   const [tableResult, extensionResult] = await Promise.all([
     db.query<{ table_name: string }>(
-      `
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = ANY($1::text[])
-      `,
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
       [[...requiredTables]],
     ),
     db.query<{ extname: string }>(
@@ -98,7 +94,6 @@ app.get('/api/v1/world/status', async () => {
     db.query<{ count: string }>('select count(*)::text as count from resource_deposits'),
     db.query<{ count: string }>('select count(*)::text as count from buildings'),
   ]);
-
   return {
     cells: Number(cells.rows[0]?.count ?? 0),
     resources: Number(resources.rows[0]?.count ?? 0),
@@ -113,10 +108,10 @@ await app.register(geologyScanRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyInvestigationRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyKnownDepositRoutes, { prefix: '/api/v1/geology' });
 await app.register(developmentProjectRoutes, { prefix: '/api/v1/development' });
-await app.register(territoryRoutes, { prefix: '/api/v1/territories' });
+await app.register(territoryRoutesV2, { prefix: '/api/v1/territories' });
 await app.register(buildingRoutes, { prefix: '/api/v1/buildings' });
 await app.register(extractionRoutesV2, { prefix: '/api/v1/extraction' });
-await app.register(marketRoutes, { prefix: '/api/v1/market' });
+await app.register(marketRoutesV2, { prefix: '/api/v1/market' });
 await app.register(storeRoutes, { prefix: '/api/v1/store' });
 await app.register(onboardingRoutes, { prefix: '/api/v1/onboarding' });
 await app.register(technologyRoutes, { prefix: '/api/v1/players' });
@@ -129,7 +124,6 @@ const shutdown = async () => {
   await app.close();
   await closeDatabase();
 };
-
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
