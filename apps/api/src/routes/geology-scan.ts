@@ -33,8 +33,16 @@ type KnowledgeRow = {
   estimated_depth_from_m: string;
   estimated_depth_to_m: string;
   estimated_quality: string;
+  estimated_density_min: string | null;
+  estimated_density_max: string | null;
   confidence: string;
 };
+
+function midpoint(minValue: string | null, maxValue: string | null): number {
+  const min = Number(minValue ?? 0);
+  const max = Number(maxValue ?? min);
+  return Math.round(((min + max) / 2) * 10_000) / 10_000;
+}
 
 export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
   app.post('/scan', async (request, reply) => {
@@ -161,7 +169,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             greatest(0, quality * (1 - $7::numeric)),
             quality * (1 + $7::numeric),
             greatest(0, density * (1 - $7::numeric)),
-            density * (1 + $7::numeric),
+            least(1, density * (1 + $7::numeric)),
             $8::numeric,
             now()
           FROM visible
@@ -178,7 +186,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             confidence = EXCLUDED.confidence,
             updated_at = now()
           WHERE player_deposit_knowledge.confidence IS NULL
-             OR EXCLUDED.confidence > player_deposit_knowledge.confidence
+             OR EXCLUDED.confidence >= player_deposit_knowledge.confidence
         `,
         [
           targetLat,
@@ -212,6 +220,8 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             k.estimated_depth_from_m::text,
             k.estimated_depth_to_m::text,
             k.estimated_quality::text,
+            k.estimated_density_min::text,
+            k.estimated_density_max::text,
             k.confidence::text
           FROM scanned_cells s
           JOIN resource_deposits d ON d.cell_h3 = s.cell
@@ -258,6 +268,11 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             depthFromMeters: Number(row.estimated_depth_from_m),
             depthToMeters: Number(row.estimated_depth_to_m),
             quality: Number(row.estimated_quality),
+            density: {
+              min: Number(row.estimated_density_min ?? 0),
+              max: Number(row.estimated_density_max ?? 0),
+              value: midpoint(row.estimated_density_min, row.estimated_density_max),
+            },
             confidence: Number(row.confidence),
           },
         })),
