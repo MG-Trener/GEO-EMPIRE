@@ -1,0 +1,77 @@
+name: Image Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/assets/images/**'
+      - '.github/workflows/image-audit.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow
+        run: python -m pip install --upgrade pillow
+
+      - name: Build image report and contact sheet
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageOps, ImageDraw, ImageFont
+          import os, math
+
+          root = Path('apps/mobile/assets/images')
+          files = sorted([p for p in root.glob('*.png') if p.is_file()])
+          out = Path('image-audit-output')
+          out.mkdir(exist_ok=True)
+          lines = []
+          thumbs = []
+          font = ImageFont.load_default()
+
+          for p in files:
+              with Image.open(p) as im:
+                  w, h = im.size
+                  mode = im.mode
+                  alpha = 'A' in im.getbands()
+                  size = p.stat().st_size
+                  lines.append(f'{p.name}\t{w}x{h}\t{mode}\talpha={alpha}\t{size} bytes')
+                  preview = im.convert('RGBA')
+                  bg = Image.new('RGBA', preview.size, (28,31,36,255))
+                  bg.alpha_composite(preview)
+                  preview = bg.convert('RGB')
+                  preview.thumbnail((360, 260), Image.Resampling.LANCZOS)
+                  card = Image.new('RGB', (390, 330), 'white')
+                  x = (390-preview.width)//2
+                  y = 10 + (260-preview.height)//2
+                  card.paste(preview, (x,y))
+                  d = ImageDraw.Draw(card)
+                  label = p.name[:18] + '…' + p.suffix
+                  d.text((12, 280), label, fill='black', font=font)
+                  d.text((12, 298), f'{w}x{h} | {size/1024/1024:.2f} MB', fill='black', font=font)
+                  thumbs.append(card)
+
+          (out/'report.txt').write_text('\n'.join(lines), encoding='utf-8')
+          if thumbs:
+              cols = 3
+              rows = math.ceil(len(thumbs)/cols)
+              sheet = Image.new('RGB', (cols*390, rows*330), (220,220,220))
+              for i, card in enumerate(thumbs):
+                  sheet.paste(card, ((i%cols)*390, (i//cols)*330))
+              sheet.save(out/'contact-sheet.jpg', quality=88, optimize=True)
+          PY
+
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: geo-empire-image-audit
+          path: image-audit-output/
+          retention-days: 3
