@@ -42,9 +42,7 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-          cache-dependency-path: |
-            apps/mobile/android/*.gradle*
-            apps/mobile/android/**/gradle-wrapper.properties
+          cache-dependency-path: package-lock.json
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
