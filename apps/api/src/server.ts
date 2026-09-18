@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { closeDatabase, db } from './db.js';
+import { ensureTechnologySchema } from './game/technology-service.js';
 import { buildingRoutes } from './routes/buildings.js';
 import { developmentProjectRoutes } from './routes/development-projects.js';
 import { extractionRoutes } from './routes/extraction.js';
@@ -11,16 +12,20 @@ import { marketRoutes } from './routes/market.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { playerRoutes } from './routes/players.js';
 import { storeRoutes } from './routes/store.js';
+import { technologyRoutes } from './routes/technologies.js';
 import { territoryRoutes } from './routes/territories.js';
 import { worldRoutes } from './routes/world.js';
 
 const app = Fastify({ logger: true });
+
+await ensureTechnologySchema();
 
 const requiredTables = [
   'players',
   'wallets',
   'wallet_transactions',
   'player_geology_skills',
+  'player_technologies',
   'world_cells',
   'resources',
   'resource_deposits',
@@ -114,6 +119,7 @@ await app.register(extractionRoutes, { prefix: '/api/v1/extraction' });
 await app.register(marketRoutes, { prefix: '/api/v1/market' });
 await app.register(storeRoutes, { prefix: '/api/v1/store' });
 await app.register(onboardingRoutes, { prefix: '/api/v1/onboarding' });
+await app.register(technologyRoutes, { prefix: '/api/v1/players' });
 await app.register(playerRoutes, { prefix: '/api/v1/players' });
 
 const port = Number(process.env.PORT ?? 4000);
