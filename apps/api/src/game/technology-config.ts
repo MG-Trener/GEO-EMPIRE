@@ -5,12 +5,8 @@ export const TECHNOLOGY_KEYS = [
   'mine_mechanization',
   'well_optimization',
   'predictive_maintenance',
-  'recovery_engineering',
-  'strategic_procurement',
-  'modular_construction',
   'commodity_trading',
   'land_management',
-  'investment_analytics',
   'warehouse_network',
   'heavy_haul',
   'pipeline_network',
@@ -26,7 +22,7 @@ export type TechnologyDefinition = {
   description: string;
   effect: string;
   effectPerLevel: number;
-  effectUnit: 'percent' | 'hours' | 'confidence';
+  effectUnit: 'percent' | 'hours';
   costScale: number;
 };
 
@@ -72,36 +68,6 @@ export const TECHNOLOGY_DEFINITIONS: readonly TechnologyDefinition[] = [
     costScale: 1.05,
   },
   {
-    key: 'recovery_engineering',
-    category: 'production',
-    title: 'Инженерия извлечения',
-    description: 'Совершенствование технологических схем повышает коэффициент извлечения запасов.',
-    effect: 'Коэффициент извлечения',
-    effectPerLevel: 0.02,
-    effectUnit: 'percent',
-    costScale: 1.2,
-  },
-  {
-    key: 'strategic_procurement',
-    category: 'economy',
-    title: 'Стратегические закупки',
-    description: 'Долгосрочные контракты и тендеры уменьшают капитальные затраты на проекты.',
-    effect: 'Снижение CAPEX',
-    effectPerLevel: 0.03,
-    effectUnit: 'percent',
-    costScale: 1.0,
-  },
-  {
-    key: 'modular_construction',
-    category: 'economy',
-    title: 'Модульное строительство',
-    description: 'Заводская подготовка модулей сокращает срок ввода промышленных объектов.',
-    effect: 'Сокращение времени строительства',
-    effectPerLevel: 0.04,
-    effectUnit: 'percent',
-    costScale: 1.1,
-  },
-  {
     key: 'commodity_trading',
     category: 'economy',
     title: 'Сырьевой трейдинг',
@@ -120,16 +86,6 @@ export const TECHNOLOGY_DEFINITIONS: readonly TechnologyDefinition[] = [
     effectPerLevel: 0.04,
     effectUnit: 'percent',
     costScale: 0.9,
-  },
-  {
-    key: 'investment_analytics',
-    category: 'economy',
-    title: 'Инвестиционная аналитика',
-    description: 'Более сильные модели риска позволяют принимать решения при меньшей геологической неопределённости.',
-    effect: 'Снижение порога достоверности проекта',
-    effectPerLevel: 0.005,
-    effectUnit: 'confidence',
-    costScale: 1.2,
   },
   {
     key: 'warehouse_network',
@@ -182,12 +138,8 @@ export type TechnologyModifiers = {
   mineProductionMultiplier: number;
   wellProductionMultiplier: number;
   extractionOpexMultiplier: number;
-  recoveryBonus: number;
-  capexMultiplier: number;
-  constructionTimeMultiplier: number;
   marketPriceMultiplier: number;
   claimCostMultiplier: number;
-  minimumProjectConfidence: number;
   bufferHoursBonus: number;
 };
 
@@ -204,33 +156,14 @@ export function getTechnologyUpgradeCost(key: TechnologyKey, currentLevel: numbe
 }
 
 export function getTechnologyModifiers(levels: TechnologyLevels): TechnologyModifiers {
-  const extractionAutomation = levels.extraction_automation;
-  const mineMechanization = levels.mine_mechanization;
-  const wellOptimization = levels.well_optimization;
-  const predictiveMaintenance = levels.predictive_maintenance;
-  const recoveryEngineering = levels.recovery_engineering;
-  const strategicProcurement = levels.strategic_procurement;
-  const modularConstruction = levels.modular_construction;
-  const commodityTrading = levels.commodity_trading;
-  const landManagement = levels.land_management;
-  const investmentAnalytics = levels.investment_analytics;
-  const warehouseNetwork = levels.warehouse_network;
-  const heavyHaul = levels.heavy_haul;
-  const pipelineNetwork = levels.pipeline_network;
-  const fuelLogistics = levels.fuel_logistics;
-
   return {
-    productionMultiplier: 1 + extractionAutomation * 0.025,
-    mineProductionMultiplier: 1 + mineMechanization * 0.04 + heavyHaul * 0.025,
-    wellProductionMultiplier: 1 + wellOptimization * 0.04 + pipelineNetwork * 0.025,
-    extractionOpexMultiplier: Math.max(0.45, 1 - predictiveMaintenance * 0.035 - fuelLogistics * 0.02),
-    recoveryBonus: Math.min(0.2, recoveryEngineering * 0.02),
-    capexMultiplier: Math.max(0.65, 1 - strategicProcurement * 0.03),
-    constructionTimeMultiplier: Math.max(0.55, 1 - modularConstruction * 0.04),
-    marketPriceMultiplier: 1 + commodityTrading * 0.025,
-    claimCostMultiplier: Math.max(0.55, 1 - landManagement * 0.04),
-    minimumProjectConfidence: Math.max(0.8, 0.85 - investmentAnalytics * 0.005),
-    bufferHoursBonus: warehouseNetwork * 6,
+    productionMultiplier: 1 + levels.extraction_automation * 0.025,
+    mineProductionMultiplier: 1 + levels.mine_mechanization * 0.04 + levels.heavy_haul * 0.025,
+    wellProductionMultiplier: 1 + levels.well_optimization * 0.04 + levels.pipeline_network * 0.025,
+    extractionOpexMultiplier: Math.max(0.45, 1 - levels.predictive_maintenance * 0.035 - levels.fuel_logistics * 0.02),
+    marketPriceMultiplier: 1 + levels.commodity_trading * 0.025,
+    claimCostMultiplier: Math.max(0.55, 1 - levels.land_management * 0.04),
+    bufferHoursBonus: levels.warehouse_network * 6,
   };
 }
 
