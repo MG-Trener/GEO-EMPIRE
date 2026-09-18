@@ -49,3 +49,5 @@ jobs:
           if [ -f package-lock.json ]; then git add package-lock.json; fi
           git commit -m "feat(mobile): compact map HUD settings sounds and resource rates"
           git push origin main
+
+# retry after React Native StyleSheet compatibility fix
