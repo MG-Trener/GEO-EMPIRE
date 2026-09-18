@@ -20,6 +20,8 @@ Use `apps/mobile/src/gameAssets.ts` instead of referencing numbered sheet files 
 
 The current mobile HUD, onboarding, geology, known deposits, development projects, commodity market, store and first mission guide are already wired to these assets.
 
+The main map also renders the latest discovered resource zones as an H3 overlay after a geology scan. The filter button in the right-side map toolbar toggles that resource layer without discarding the scan result.
+
 ## Current assets
 
 ### Resources
