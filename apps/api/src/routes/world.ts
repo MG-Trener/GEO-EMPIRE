@@ -23,6 +23,8 @@ type WorldCellRow = {
   building_name: string | null;
   building_level: number | null;
   building_status: string | null;
+  building_started_at: string | null;
+  building_completed_at: string | null;
 };
 
 export async function worldRoutes(app: FastifyInstance): Promise<void> {
@@ -65,7 +67,9 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
           building_types.code AS building_code,
           building_types.name_ru AS building_name,
           buildings.level AS building_level,
-          buildings.status AS building_status
+          buildings.status AS building_status,
+          buildings.started_at::text AS building_started_at,
+          buildings.completed_at::text AS building_completed_at
         FROM cells
         LEFT JOIN territory_claims AS claims
           ON claims.cell_h3 = cells.cell
@@ -105,6 +109,8 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
             name: row.building_name,
             level: row.building_level,
             status: row.building_status,
+            startedAt: row.building_started_at,
+            completedAt: row.building_completed_at,
           }
         : null,
     }));
