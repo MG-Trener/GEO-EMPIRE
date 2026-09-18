@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db.js';
+import { ensureGeneratedWorldArea } from '../game/world-generation.js';
 
 const locateQuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),
@@ -36,6 +37,11 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { lat, lng, resolution, ring } = parsed.data;
+
+    // Materialise visited cells and deterministic geology before returning the
+    // map. This guarantees that every playable cell has something to discover
+    // without pre-generating the whole world in the database.
+    await ensureGeneratedWorldArea(lat, lng, resolution, ring);
 
     const result = await db.query<WorldCellRow>(
       `
