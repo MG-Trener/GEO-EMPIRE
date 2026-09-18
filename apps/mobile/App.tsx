@@ -10,10 +10,10 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Camera, GeoJSONSource, Layer, Map } from '@maplibre/maplibre-react-native';
-import { cellToBoundary } from 'h3-js';
+import { cellToBoundary, gridDisk } from 'h3-js';
 import type { FeatureCollection, Polygon } from 'geojson';
 import {
   claimTerritory,
@@ -21,6 +21,7 @@ import {
   constructBuilding,
   DEMO_PLAYER_ID,
   getExtractionStatus,
+  getGeologyUpgrades,
   getInventory,
   locateWorld,
   runGeologyScan,
@@ -33,6 +34,7 @@ import { useGameSounds } from './src/useGameSounds';
 import { GeologyProgressPanel, type GeoHubSection } from './src/GeologyProgressPanel';
 import type {
   ExtractionStatus,
+  GeologyCapabilities,
   GeologyScanResponse,
   InventoryItem,
   LocateResponse,
@@ -43,6 +45,7 @@ const ASTANA_DEMO = { lat: 51.1694, lng: 71.4491 };
 const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 const WORLD_RING = 6;
 const MAP_ZOOM = 17.85;
+const EARTH_RADIUS_METERS = 6_371_000;
 
 type MainSection = 'map' | 'exploration' | 'development' | 'trade' | 'technology';
 
@@ -96,12 +99,73 @@ function scanDepositsToGeoJson(scan: GeologyScanResponse | null): FeatureCollect
   };
 }
 
+function scanCoverageToGeoJson(h3Index: string | undefined, coverageRing: number): FeatureCollection<Polygon> {
+  if (!h3Index) return { type: 'FeatureCollection', features: [] };
+
+  try {
+    const cells = gridDisk(h3Index, Math.max(0, Math.trunc(coverageRing)));
+    return {
+      type: 'FeatureCollection',
+      features: cells.flatMap((cell, index) => {
+        const boundary = cellToBoundary(cell, true) as [number, number][];
+        if (!boundary.length) return [];
+        return [{
+          type: 'Feature' as const,
+          id: `scan-area-${cell}`,
+          properties: { center: index === 0 ? 1 : 0 },
+          geometry: { type: 'Polygon' as const, coordinates: [[...boundary, boundary[0]]] },
+        }];
+      }),
+    };
+  } catch {
+    return { type: 'FeatureCollection', features: [] };
+  }
+}
+
+function rangeCircleToGeoJson(lat: number, lng: number, radiusMeters: number): FeatureCollection<Polygon> {
+  if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) {
+    return { type: 'FeatureCollection', features: [] };
+  }
+
+  const points: [number, number][] = [];
+  const angularDistance = radiusMeters / EARTH_RADIUS_METERS;
+  const latRad = lat * Math.PI / 180;
+  const lngRad = lng * Math.PI / 180;
+
+  for (let step = 0; step <= 64; step += 1) {
+    const bearing = (step / 64) * Math.PI * 2;
+    const targetLat = Math.asin(
+      Math.sin(latRad) * Math.cos(angularDistance)
+      + Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearing),
+    );
+    const targetLng = lngRad + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
+      Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(targetLat),
+    );
+    points.push([targetLng * 180 / Math.PI, targetLat * 180 / Math.PI]);
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      id: 'scan-range',
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [points] },
+    }],
+  };
+}
+
 export default function App() {
+  const insets = useSafeAreaInsets();
+  const safeTop = Math.max(insets.top, 24) + 6;
+  const safeBottom = Math.max(insets.bottom, 24) + 8;
   const [position, setPosition] = useState(ASTANA_DEMO);
   const [usingDemoPosition, setUsingDemoPosition] = useState(true);
   const [world, setWorld] = useState<LocateResponse | null>(null);
   const [selectedCell, setSelectedCell] = useState<WorldCell | null>(null);
   const [scan, setScan] = useState<GeologyScanResponse | null>(null);
+  const [geologyCapabilities, setGeologyCapabilities] = useState<GeologyCapabilities | null>(null);
   const [extraction, setExtraction] = useState<ExtractionStatus | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loadingWorld, setLoadingWorld] = useState(false);
@@ -147,6 +211,20 @@ export default function App() {
       setLoadingWorld(false);
     }
   }, [refreshInventory]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getGeologyUpgrades()
+      .then((catalog) => {
+        if (!cancelled) setGeologyCapabilities(catalog.capabilities);
+      })
+      .catch(() => {
+        if (!cancelled) setGeologyCapabilities(null);
+      });
+
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +299,15 @@ export default function App() {
     }],
   }), [position]);
 
+  const effectiveCapabilities = scan?.capabilities ?? geologyCapabilities;
+  const scanCoverageGeoJson = useMemo(
+    () => scanCoverageToGeoJson(selectedCell?.h3Index, effectiveCapabilities?.coverageRing ?? 0),
+    [effectiveCapabilities?.coverageRing, selectedCell?.h3Index],
+  );
+  const scanRangeGeoJson = useMemo(
+    () => rangeCircleToGeoJson(position.lat, position.lng, effectiveCapabilities?.rangeMeters ?? 0),
+    [effectiveCapabilities?.rangeMeters, position.lat, position.lng],
+  );
   const depositsInSelectedCell = useMemo(
     () => scan?.deposits.filter((deposit) => deposit.h3Index === selectedCell?.h3Index) ?? [],
     [scan, selectedCell],
@@ -244,16 +331,17 @@ export default function App() {
         targetLng: selectedCell.center.lng,
       });
       setScan(result);
+      setGeologyCapabilities(result.capabilities);
       updateSetting('showResourceOverlay', true);
       playSuccess();
       setSheetExpanded(true);
       setMessage(result.deposits.length
-        ? `Разведка сохранена · обнаружено залежей: ${result.deposits.length}`
-        : 'Разведка сохранена · доступных залежей не обнаружено');
+        ? `Разведка: ${result.capabilities.scannedCellCount} яч. · найдено залежей: ${result.deposits.length}`
+        : `Разведка: ${result.capabilities.scannedCellCount} яч. · данные по участку обновлены`);
     } catch (error) {
       playError();
       const reason = error instanceof Error ? error.message : 'ошибка';
-      setMessage(reason === 'target_out_of_range' ? 'Выбранный участок вне дальности георазведки' : 'Не удалось провести георазведку');
+      setMessage(reason === 'target_out_of_range' ? 'Выбранный участок вне радиуса георазведки' : 'Не удалось провести георазведку');
     } finally {
       setScanning(false);
     }
@@ -373,6 +461,19 @@ export default function App() {
       <Map style={styles.map} mapStyle={MAP_STYLE_URL}>
         <Camera center={[position.lng, position.lat]} zoom={MAP_ZOOM} />
 
+        <GeoJSONSource id="scan-range-preview" data={scanRangeGeoJson}>
+          <Layer
+            id="scan-range-fill"
+            type="fill"
+            paint={{ 'fill-color': '#38d8ff', 'fill-opacity': 0.045 } as never}
+          />
+          <Layer
+            id="scan-range-outline"
+            type="line"
+            paint={{ 'line-color': '#21cce8', 'line-width': 1.6, 'line-opacity': 0.78 } as never}
+          />
+        </GeoJSONSource>
+
         <GeoJSONSource
           id="geo-empire-cells"
           data={cellsGeoJson}
@@ -397,7 +498,7 @@ export default function App() {
                 ['==', ['get', 'occupied'], 1], '#d04b4b',
                 '#12a98b',
               ],
-              'fill-opacity': settings.showCellGrid ? ['case', ['==', ['get', 'selected'], 1], 0.44, 0.16] : 0,
+              'fill-opacity': settings.showCellGrid ? ['case', ['==', ['get', 'selected'], 1], 0.46, 0.2] : 0,
             } as never}
           />
           <Layer
@@ -411,8 +512,28 @@ export default function App() {
                 ['==', ['get', 'occupied'], 1], '#ed5959',
                 '#00a995',
               ],
-              'line-width': settings.showCellGrid ? ['case', ['==', ['get', 'selected'], 1], 3.6, 1.9] : 0,
+              'line-width': settings.showCellGrid ? ['case', ['==', ['get', 'selected'], 1], 3.8, 2.2] : 0,
               'line-opacity': settings.showCellGrid ? 1 : 0,
+            } as never}
+          />
+        </GeoJSONSource>
+
+        <GeoJSONSource id="scan-coverage-preview" data={scanCoverageGeoJson}>
+          <Layer
+            id="scan-coverage-fill"
+            type="fill"
+            paint={{
+              'fill-color': '#2dcdf4',
+              'fill-opacity': scanning ? 0.28 : 0.11,
+            } as never}
+          />
+          <Layer
+            id="scan-coverage-outline"
+            type="line"
+            paint={{
+              'line-color': '#60e6ff',
+              'line-width': scanning ? 3.2 : 2,
+              'line-opacity': 0.9,
             } as never}
           />
         </GeoJSONSource>
@@ -424,17 +545,22 @@ export default function App() {
             paint={{
               'fill-color': [
                 'match', ['get', 'resourceCode'],
-                'OIL', '#111820',
-                'GAS', '#2d9df4',
-                'GOLD', '#f4b942',
-                'COPPER', '#d76b3e',
-                'IRON', '#a7b2bd',
+                'CRUDE_OIL', '#111820',
+                'NATURAL_GAS', '#2d9df4',
+                'GOLD_ORE', '#f4b942',
+                'SILVER_ORE', '#cbd1d8',
+                'COPPER_ORE', '#d76b3e',
+                'IRON_ORE', '#8895a0',
                 'COAL', '#343b43',
+                'LIMESTONE', '#d7c9a8',
+                'SAND', '#d4b76f',
+                'CLAY', '#ba6f4b',
                 'URANIUM', '#65db72',
+                'LITHIUM', '#cf80f0',
                 'RARE_EARTHS', '#9b63e8',
                 '#32d8e6',
               ],
-              'fill-opacity': 0.5,
+              'fill-opacity': 0.56,
             } as never}
           />
           <Layer
@@ -443,7 +569,7 @@ export default function App() {
             paint={{
               'line-color': '#f4f8fa',
               'line-width': 2.2,
-              'line-opacity': 0.82,
+              'line-opacity': 0.88,
             } as never}
           />
         </GeoJSONSource>
@@ -454,7 +580,11 @@ export default function App() {
         </GeoJSONSource>
       </Map>
 
-      <SafeAreaView pointerEvents="box-none" style={styles.overlay} edges={['top', 'bottom']}>
+      <SafeAreaView
+        pointerEvents="box-none"
+        style={[styles.overlay, { paddingTop: safeTop, paddingBottom: safeBottom }]}
+        edges={[]}
+      >
         <View style={styles.resourceBar}>
           <ResourceStrip inventory={inventory} />
           {loadingWorld ? <ActivityIndicator size="small" color="#38d8ff" style={styles.resourceLoading} /> : null}
@@ -474,7 +604,7 @@ export default function App() {
           </Pressable>
         ) : null}
 
-        <View style={styles.mapTools}>
+        <View style={[styles.mapTools, { top: safeTop + 56 }]}>
           <MapToolButton
             source={gameAssets.utility.center}
             accessibilityLabel="Моё местоположение"
@@ -540,6 +670,7 @@ export default function App() {
                 loadingExtraction={loadingExtraction}
                 extraction={extraction}
                 scan={scan}
+                scanCapabilities={effectiveCapabilities}
                 inventory={inventory}
                 depositsInSelectedCell={depositsInSelectedCell.length}
                 onClaim={() => void claimSelected()}
@@ -667,6 +798,7 @@ function TerritoryPanel({
   loadingExtraction,
   extraction,
   scan,
+  scanCapabilities,
   inventory,
   depositsInSelectedCell,
   onClaim,
@@ -683,6 +815,7 @@ function TerritoryPanel({
   loadingExtraction: boolean;
   extraction: ExtractionStatus | null;
   scan: GeologyScanResponse | null;
+  scanCapabilities: GeologyCapabilities | null;
   inventory: InventoryItem[];
   depositsInSelectedCell: number;
   onClaim: () => void;
@@ -691,6 +824,10 @@ function TerritoryPanel({
   onCollect: () => void;
   onStartExtraction: (depositId: string) => void;
 }) {
+  const previewCellCount = scanCapabilities
+    ? 1 + 3 * scanCapabilities.coverageRing * (scanCapabilities.coverageRing + 1)
+    : 1;
+
   return (
     <>
       <View style={styles.rowBetween}>
@@ -718,6 +855,16 @@ function TerritoryPanel({
       ) : (
         <Text style={styles.infoText}>Свободный участок. Проведите георазведку, оцените ресурсы и арендуйте территорию.</Text>
       )}
+
+      {selectedCell && scanCapabilities ? (
+        <View style={styles.scanPreviewBox}>
+          <Text style={styles.scanPreviewTitle}>ЗОНА ГЕОРАЗВЕДКИ</Text>
+          <Text style={styles.scanPreviewText}>
+            Радиус выбора цели: {formatNumber(scanCapabilities.rangeMeters)} м · область скана: {previewCellCount} яч. · глубина: {formatNumber(scanCapabilities.maxDepthMeters)} м
+          </Text>
+          <Text style={styles.scanPreviewHint}>Голубой круг — максимальная дальность. Голубые H3-ячейки — участок, который будет исследован.</Text>
+        </View>
+      ) : null}
 
       <View style={styles.actionGrid}>
         {selectedCell && !selectedCell.claim ? (
@@ -798,9 +945,10 @@ function TerritoryPanel({
         <View style={styles.scanResults}>
           <View style={styles.statsRow}>
             <Stat value={`${scan.capabilities.maxDepthMeters} м`} label="глубина" />
-            <Stat value={`${scan.capabilities.rangeMeters} м`} label="дальность" />
-            <Stat value={`${Math.round(scan.capabilities.confidence * 100)}%`} label="точность" />
+            <Stat value={`${scan.capabilities.rangeMeters} м`} label="радиус цели" />
+            <Stat value={`${scan.capabilities.scannedCellCount}`} label="ячеек скана" />
           </View>
+          <Text style={styles.scanMeta}>Точность оценки: {Math.round(scan.capabilities.confidence * 100)}% · область скана подсвечена на карте</Text>
           <Text style={styles.scanId}>Отчёт: {scan.scanId.slice(0, 8)}</Text>
 
           {scan.deposits.length ? scan.deposits.map((deposit) => {
@@ -831,7 +979,7 @@ function TerritoryPanel({
                 ) : null}
               </View>
             );
-          }) : <Text style={styles.emptyText}>Доступных вашему уровню геологии залежей не найдено.</Text>}
+          }) : <Text style={styles.emptyText}>Скан завершён, но сервер не вернул доступную залежь. Обновите карту и повторите разведку.</Text>}
 
           {!extraction && ownedByPlayer && isExtractionBuilding && depositsInSelectedCell === 0 ? (
             <Text style={styles.emptyText}>Для запуска добычи сначала найдите залежь именно в ячейке этого объекта.</Text>
@@ -910,7 +1058,7 @@ const absolute = { position: 'absolute' as const, top: 0, right: 0, bottom: 0, l
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#07111a' },
   map: { ...absolute },
-  overlay: { ...absolute, paddingHorizontal: 8, paddingTop: 3 },
+  overlay: { ...absolute, paddingHorizontal: 8 },
   flex: { flex: 1 },
   resourceBar: {
     minHeight: 48,
@@ -984,7 +1132,6 @@ const styles = StyleSheet.create({
   mapTools: {
     position: 'absolute',
     right: 8,
-    top: 62,
     gap: 5,
   },
   mapToolButton: {
@@ -1067,6 +1214,18 @@ const styles = StyleSheet.create({
   },
   infoTitle: { color: '#f4c957', fontSize: 13, fontWeight: '800' },
   infoText: { color: '#b6c3cc', fontSize: 10, marginTop: 4 },
+  scanPreviewBox: {
+    marginTop: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: 'rgba(15,63,79,0.48)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.25)',
+  },
+  scanPreviewTitle: { color: '#55dcf3', fontSize: 7.5, fontWeight: '900', letterSpacing: 0.8 },
+  scanPreviewText: { color: '#d5e8ed', fontSize: 9, lineHeight: 13, marginTop: 3, fontWeight: '700' },
+  scanPreviewHint: { color: '#7999a8', fontSize: 7.5, lineHeight: 11, marginTop: 3 },
   actionGrid: { marginTop: 3 },
   actionButton: {
     marginTop: 7,
@@ -1106,6 +1265,7 @@ const styles = StyleSheet.create({
   economicsText: { color: '#aebdca', fontSize: 9, marginTop: 3 },
   operatingCost: { color: '#f5c451', fontSize: 9, fontWeight: '900', marginTop: 4 },
   scanResults: { marginTop: 11 },
+  scanMeta: { color: '#8ca4b1', fontSize: 8.5, lineHeight: 12, marginBottom: 4 },
   scanId: { color: '#687f90', fontSize: 8, marginBottom: 4 },
   statsRow: { flexDirection: 'row', gap: 7, marginBottom: 8 },
   stat: {
