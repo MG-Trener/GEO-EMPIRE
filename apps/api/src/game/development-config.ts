@@ -52,63 +52,63 @@ type MethodConfig = {
 const METHOD_CONFIG: Record<DevelopmentMethod, MethodConfig> = {
   open_pit: {
     method: 'open_pit',
-    name: 'Открытый карьер',
-    description: 'Высокая производительность на относительно неглубоких твёрдых полезных ископаемых.',
+    name: 'Пилотный карьер',
+    description: 'Стартовый способ освоения неглубокой залежи. Низкий CAPEX позволяет запустить первую добычу и освоить экономический цикл.',
     buildingCode: 'MINE',
-    baseCapex: 180_000,
-    capexPerMeter: 800,
-    baseOpexFraction: 0.48,
-    depthOpexPerMeter: 0.0004,
-    maxDepthOpexFraction: 0.12,
-    recoveryRate: 0.90,
-    productionHorizonDays: 365,
-    maxDailyByUnit: { t: 6000, kg: 1500, unit: 6000 },
-    constructionSeconds: 120,
+    baseCapex: 12_000,
+    capexPerMeter: 100,
+    baseOpexFraction: 0.32,
+    depthOpexPerMeter: 0.00035,
+    maxDepthOpexFraction: 0.10,
+    recoveryRate: 0.82,
+    productionHorizonDays: 240,
+    maxDailyByUnit: { t: 2500, kg: 500, unit: 2500 },
+    constructionSeconds: 45,
   },
   underground_mine: {
     method: 'underground_mine',
     name: 'Подземная шахта',
-    description: 'Дороже, но позволяет разрабатывать глубокие рудные тела с меньшим поверхностным следом.',
+    description: 'Промышленный проект для глубоких рудных тел. Требует более точной геологии и значительных инвестиций.',
     buildingCode: 'MINE',
-    baseCapex: 500_000,
-    capexPerMeter: 1500,
-    baseOpexFraction: 0.62,
-    depthOpexPerMeter: 0.00025,
+    baseCapex: 120_000,
+    capexPerMeter: 600,
+    baseOpexFraction: 0.52,
+    depthOpexPerMeter: 0.00022,
     maxDepthOpexFraction: 0.12,
-    recoveryRate: 0.82,
-    productionHorizonDays: 540,
-    maxDailyByUnit: { t: 2500, kg: 650, unit: 2500 },
-    constructionSeconds: 180,
+    recoveryRate: 0.84,
+    productionHorizonDays: 480,
+    maxDailyByUnit: { t: 3500, kg: 800, unit: 3500 },
+    constructionSeconds: 120,
   },
   oil_well: {
     method: 'oil_well',
     name: 'Нефтяная скважина',
-    description: 'Проект бурения и эксплуатации нефтяной залежи.',
+    description: 'Капиталоёмкий проект бурения и эксплуатации нефтяной залежи.',
     buildingCode: 'OIL_WELL',
-    baseCapex: 650_000,
-    capexPerMeter: 1000,
-    baseOpexFraction: 0.40,
-    depthOpexPerMeter: 0.00012,
+    baseCapex: 180_000,
+    capexPerMeter: 450,
+    baseOpexFraction: 0.38,
+    depthOpexPerMeter: 0.00010,
     maxDepthOpexFraction: 0.12,
-    recoveryRate: 0.55,
+    recoveryRate: 0.58,
     productionHorizonDays: 600,
-    maxDailyByUnit: { bbl: 4000, unit: 4000 },
-    constructionSeconds: 150,
+    maxDailyByUnit: { bbl: 4500, unit: 4500 },
+    constructionSeconds: 120,
   },
   gas_well: {
     method: 'gas_well',
     name: 'Газовая скважина',
-    description: 'Проект бурения и эксплуатации газовой залежи.',
+    description: 'Промышленный проект бурения и эксплуатации газовой залежи.',
     buildingCode: 'GAS_WELL',
-    baseCapex: 600_000,
-    capexPerMeter: 950,
-    baseOpexFraction: 0.36,
-    depthOpexPerMeter: 0.0001,
+    baseCapex: 160_000,
+    capexPerMeter: 400,
+    baseOpexFraction: 0.34,
+    depthOpexPerMeter: 0.00009,
     maxDepthOpexFraction: 0.12,
-    recoveryRate: 0.65,
+    recoveryRate: 0.68,
     productionHorizonDays: 600,
-    maxDailyByUnit: { m3: 100_000, unit: 100_000 },
-    constructionSeconds: 150,
+    maxDailyByUnit: { m3: 120_000, unit: 120_000 },
+    constructionSeconds: 120,
   },
 };
 
@@ -137,6 +137,17 @@ function riskPenalty(confidence: number): number {
 
 export function getDevelopmentConstructionSeconds(method: DevelopmentMethod): number {
   return METHOD_CONFIG[method].constructionSeconds;
+}
+
+export function getRequiredGeologyConfidence(input: {
+  rarity: number;
+  depthToMeters: number;
+  resourceCode: string;
+}): number {
+  if (input.resourceCode === 'CRUDE_OIL' || input.resourceCode === 'NATURAL_GAS') return 0.78;
+  if (input.rarity >= 8 || input.depthToMeters > 600) return 0.85;
+  if (input.rarity >= 5 || input.depthToMeters > 250) return 0.70;
+  return 0.55;
 }
 
 export function buildDevelopmentOptions(input: BuildInput): DevelopmentOption[] {
@@ -185,7 +196,7 @@ export function buildDevelopmentOptions(input: BuildInput): DevelopmentOption[] 
       paybackDays,
       projectValue,
       geologyConfidence: round(confidence, 4),
-      approvalReady: confidence >= 0.85,
+      approvalReady: confidence >= 0.55,
       recommended: false,
     };
   });
