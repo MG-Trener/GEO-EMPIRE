@@ -3,9 +3,9 @@ import { db } from '../db.js';
 /**
  * Materialises the visited H3 area and deterministic geology for it.
  *
- * Every generated cell gets at least one shallow, low-rarity deposit that a
- * starter geologist can discover. A second deterministic layer is generated
- * deeper underground so geology upgrades continue to reveal new value.
+ * Each generated cell is assigned one primary resource type. The same resource
+ * may have a shallow and a deeper horizon, so technology reveals more of the
+ * deposit without turning one map cell into a stack of unrelated commodities.
  *
  * Generation is lazy: only cells requested through /world/locate are stored.
  */
@@ -43,8 +43,9 @@ export async function ensureGeneratedWorldArea(
     [lat, lng, resolution, ring],
   );
 
-  // A starter-visible layer. Restrict the pool to actual underground/mineral
-  // resources and rarity <= 2 so a level-1 scan can always find something.
+  // Starter-visible horizon. The pool is deliberately broad enough to make
+  // nearby exploration interesting, but remains rarity <= 2 so a new player
+  // always gets a usable first project.
   await db.query(
     `
       WITH origin AS (
@@ -98,25 +99,21 @@ export async function ensureGeneratedWorldArea(
         ((chosen.seed % 18) + 24 + ((chosen.seed / 97) % 28))::numeric,
         (75000 + (chosen.seed % 1925000))::numeric,
         (75000 + (chosen.seed % 1925000))::numeric,
-        (0.25 + ((chosen.seed % 650)::numeric / 1000)),
+        (0.20 + ((chosen.seed % 760)::numeric / 1000)),
         (45 + ((chosen.seed % 5000)::numeric / 100)),
         chosen.seed
       FROM chosen
       WHERE NOT EXISTS (
-        SELECT 1
-        FROM resource_deposits existing
-        JOIN resources resource ON resource.id = existing.resource_id
-        WHERE existing.cell_h3 = chosen.cell
-          AND existing.depth_from_m <= 50
-          AND resource.rarity <= 2
+        SELECT 1 FROM resource_deposits existing WHERE existing.cell_h3 = chosen.cell
       )
       ON CONFLICT (cell_h3, resource_id, depth_from_m, depth_to_m) DO NOTHING
     `,
     [lat, lng, resolution, ring],
   );
 
-  // A deeper layer in every cell. It can be common or rare and becomes visible
-  // as depth/sensitivity skills grow. All values remain deterministic per H3.
+  // A second horizon uses the SAME resource already assigned to the cell.
+  // Density varies independently, which later feeds the heatmap and gives the
+  // player a reason to compare neighbouring cells of the same commodity.
   await db.query(
     `
       WITH origin AS (
@@ -127,29 +124,21 @@ export async function ensureGeneratedWorldArea(
         FROM origin
         CROSS JOIN LATERAL h3_grid_disk_distances(origin.h3, $4) AS grid
       ),
-      resource_pool AS (
-        SELECT
-          id,
-          row_number() OVER (ORDER BY id) AS rn,
-          count(*) OVER () AS pool_size
-        FROM resources
-        WHERE active = true
-          AND category IN ('ore', 'fuel', 'construction', 'rare')
+      primary_deposit AS (
+        SELECT DISTINCT ON (d.cell_h3)
+          d.cell_h3 AS cell,
+          d.resource_id,
+          d.generation_seed
+        FROM resource_deposits d
+        JOIN cells c ON c.cell = d.cell_h3
+        ORDER BY d.cell_h3, d.depth_from_m, d.id
       ),
       seeded AS (
         SELECT
           cell,
+          resource_id,
           (hashtextextended(cell::text, 202) & 9223372036854775807::bigint) AS seed
-        FROM cells
-      ),
-      chosen AS (
-        SELECT
-          seeded.cell,
-          seeded.seed,
-          resource_pool.id AS resource_id
-        FROM seeded
-        JOIN resource_pool
-          ON resource_pool.rn = 1 + (seeded.seed % resource_pool.pool_size::bigint)
+        FROM primary_deposit
       )
       INSERT INTO resource_deposits (
         cell_h3,
@@ -163,16 +152,22 @@ export async function ensureGeneratedWorldArea(
         generation_seed
       )
       SELECT
-        chosen.cell,
-        chosen.resource_id,
-        (80 + (chosen.seed % 700))::numeric,
-        (180 + (chosen.seed % 700) + ((chosen.seed / 131) % 850))::numeric,
-        (50000 + (chosen.seed % 4950000))::numeric,
-        (50000 + (chosen.seed % 4950000))::numeric,
-        (0.08 + ((chosen.seed % 880)::numeric / 1000)),
-        (38 + ((chosen.seed % 5900)::numeric / 100)),
-        chosen.seed
-      FROM chosen
+        seeded.cell,
+        seeded.resource_id,
+        (80 + (seeded.seed % 700))::numeric,
+        (180 + (seeded.seed % 700) + ((seeded.seed / 131) % 850))::numeric,
+        (50000 + (seeded.seed % 4950000))::numeric,
+        (50000 + (seeded.seed % 4950000))::numeric,
+        (0.08 + ((seeded.seed % 880)::numeric / 1000)),
+        (38 + ((seeded.seed % 5900)::numeric / 100)),
+        seeded.seed
+      FROM seeded
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM resource_deposits existing
+        WHERE existing.cell_h3 = seeded.cell
+          AND existing.depth_from_m >= 80
+      )
       ON CONFLICT (cell_h3, resource_id, depth_from_m, depth_to_m) DO NOTHING
     `,
     [lat, lng, resolution, ring],
