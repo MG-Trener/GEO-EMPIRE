@@ -28,4 +28,4 @@ jobs:
         run: npm run build:api
 
       - name: Build API Docker image
-        run: docker build -f Dockerfile -t geo-empire-api:ci apps/api
+        run: docker build -f apps/api/Dockerfile -t geo-empire-api:ci apps/api
