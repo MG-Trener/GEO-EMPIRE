@@ -197,7 +197,7 @@ function PrimaryButton({ label, onPress, disabled = false, icon }: { label: stri
 const styles = StyleSheet.create({
   gameRoot: { flex: 1 },
   root: { flex: 1, backgroundColor: '#071018' },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,10,15,0.69)' },
+  scrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,10,15,0.69)' },
   safe: { flex: 1 },
   flex: { flex: 1, paddingHorizontal: 18, paddingBottom: 14 },
   flexGrow: { flex: 1 },
