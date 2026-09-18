@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
+  type ImageSourcePropType,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -25,6 +27,7 @@ import {
   runGeologyScan,
   startExtraction,
 } from './src/api';
+import { gameAssets, resourceIconForCode } from './src/gameAssets';
 import { GeologyProgressPanel } from './src/GeologyProgressPanel';
 import type {
   ExtractionStatus,
@@ -304,6 +307,11 @@ export default function App() {
   const ownedByPlayer = selectedCell?.claim?.ownerId === DEMO_PLAYER_ID;
   const isExtractionBuilding = ['MINE', 'OIL_WELL', 'GAS_WELL'].includes(selectedCell?.building?.code ?? '');
 
+  const showFutureSection = useCallback((name: string) => {
+    setMessage(`${name}: интерфейс раздела готовится к подключению к игровой логике`);
+    setSheetExpanded(false);
+  }, []);
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
@@ -330,60 +338,86 @@ export default function App() {
             paint={{
               'fill-color': [
                 'case',
-                ['==', ['get', 'current'], 1], '#dca936',
-                ['==', ['get', 'occupied'], 1], '#b74a4a',
-                '#16886d',
+                ['==', ['get', 'current'], 1], '#e3ad38',
+                ['==', ['get', 'occupied'], 1], '#d04b4b',
+                '#12a98b',
               ],
-              'fill-opacity': ['case', ['==', ['get', 'selected'], 1], 0.42, 0.24],
+              'fill-opacity': ['case', ['==', ['get', 'selected'], 1], 0.46, 0.22],
             } as never}
           />
           <Layer
             id="cell-outline"
             type="line"
             paint={{
-              'line-color': ['case', ['==', ['get', 'selected'], 1], '#ffe08a', '#8fd7bc'],
-              'line-width': ['case', ['==', ['get', 'selected'], 1], 2.8, 1.05],
-              'line-opacity': 0.9,
+              'line-color': ['case', ['==', ['get', 'selected'], 1], '#ffd76a', '#48e2c0'],
+              'line-width': ['case', ['==', ['get', 'selected'], 1], 3.2, 1.1],
+              'line-opacity': 0.92,
             } as never}
           />
         </GeoJSONSource>
 
         <GeoJSONSource id="player-position" data={playerGeoJson}>
-          <Layer id="player-halo" type="circle" paint={{ 'circle-radius': 14, 'circle-color': '#0a0f16', 'circle-opacity': 0.46 } as never} />
-          <Layer id="player-dot" type="circle" paint={{ 'circle-radius': 6, 'circle-color': '#f5c451', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } as never} />
+          <Layer id="player-halo" type="circle" paint={{ 'circle-radius': 15, 'circle-color': '#0a0f16', 'circle-opacity': 0.5 } as never} />
+          <Layer id="player-dot" type="circle" paint={{ 'circle-radius': 6, 'circle-color': '#38d8ff', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } as never} />
         </GeoJSONSource>
       </Map>
 
       <SafeAreaView pointerEvents="box-none" style={styles.overlay}>
-        <View style={styles.topCard}>
-          <View style={styles.flex}>
+        <View style={styles.topHud}>
+          <View style={styles.brandBlock}>
             <Text style={styles.brand}>GEO EMPIRE</Text>
-            <Text style={styles.status} numberOfLines={2}>{message}</Text>
+            <Text style={styles.status} numberOfLines={1}>{message}</Text>
           </View>
-          <Pressable
-            onPress={() => {
-              setShowGeology((value) => !value);
-              setSheetExpanded(false);
-            }}
-            style={({ pressed }) => [
-              styles.geologyButton,
-              showGeology && styles.geologyButtonActive,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.geologyButtonText}>{showGeology ? 'КАРТА' : 'ГЕОЛОГИЯ'}</Text>
-          </Pressable>
-          {loadingWorld ? <ActivityIndicator size="small" /> : null}
+          {loadingWorld ? <ActivityIndicator size="small" color="#38d8ff" /> : null}
         </View>
+
+        <ResourceStrip inventory={inventory} />
 
         <View style={styles.legend}>
           <Legend dotStyle={styles.freeDot} label="Свободно" />
           <Legend dotStyle={styles.busyDot} label="Занято" />
           <Legend dotStyle={styles.currentDot} label="Вы здесь" />
-          <Text style={styles.legendMeta}>r12 · локальная сетка</Text>
+        </View>
+
+        <View style={styles.mapTools}>
+          <MapToolButton
+            source={gameAssets.utility.center}
+            accessibilityLabel="Моё местоположение"
+            onPress={() => void refreshWorld(position, selectedCell?.h3Index)}
+          />
+          <MapToolButton
+            source={gameAssets.utility.layers}
+            accessibilityLabel="Слои карты"
+            onPress={() => setMessage('Слои карты: спутник, рельеф, ресурсы и инфраструктура')}
+          />
+          <MapToolButton
+            source={gameAssets.utility.filter}
+            accessibilityLabel="Фильтры ресурсов"
+            onPress={() => setMessage('Фильтр ресурсов: нефть, газ, металлы, уголь и редкоземельные')}
+          />
+          <MapToolButton
+            source={gameAssets.utility.fullscreen}
+            accessibilityLabel="Полный экран"
+            onPress={() => setMessage('Карта уже работает в полноэкранном игровом режиме')}
+          />
         </View>
 
         <View style={styles.spacer} />
+
+        <BottomNavigation
+          geologyActive={showGeology}
+          onMap={() => {
+            setShowGeology(false);
+            setSheetExpanded(false);
+          }}
+          onExploration={() => {
+            setShowGeology(true);
+            setSheetExpanded(true);
+          }}
+          onDevelopment={() => showFutureSection('Разработка')}
+          onTrade={() => showFutureSection('Торговля')}
+          onTechnology={() => showFutureSection('Технологии')}
+        />
 
         <View style={[styles.bottomCard, sheetExpanded && styles.bottomCardExpanded]}>
           <Pressable
@@ -391,7 +425,7 @@ export default function App() {
             style={({ pressed }) => [styles.sheetHandleArea, pressed && styles.pressed]}
           >
             <View style={styles.sheetHandle} />
-            <Text style={styles.sheetHint}>{sheetExpanded ? 'Свернуть' : 'Развернуть'}</Text>
+            <Text style={styles.sheetHint}>{sheetExpanded ? 'Свернуть панель' : 'Развернуть панель участка'}</Text>
           </Pressable>
 
           <ScrollView
@@ -434,6 +468,95 @@ export default function App() {
   );
 }
 
+function ResourceStrip({ inventory }: { inventory: InventoryItem[] }) {
+  const placeholders = [
+    { resourceId: -1, code: 'OIL', name: 'Нефть', unit: 'т', quantity: 0, updatedAt: '' },
+    { resourceId: -2, code: 'GAS', name: 'Газ', unit: 'м³', quantity: 0, updatedAt: '' },
+    { resourceId: -3, code: 'GOLD', name: 'Золото', unit: 'кг', quantity: 0, updatedAt: '' },
+  ];
+  const items = inventory.length ? inventory.slice(0, 4) : placeholders;
+
+  return (
+    <View style={styles.resourceStrip}>
+      {items.map((item) => (
+        <View key={`${item.resourceId}-${item.code}`} style={styles.resourceChip}>
+          <Image source={resourceIconForCode(item.code || item.name)} style={styles.resourceChipIcon} resizeMode="contain" />
+          <View style={styles.resourceChipText}>
+            <Text style={styles.resourceChipName} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.resourceChipValue} numberOfLines={1}>{formatNumber(item.quantity, 1)}</Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function MapToolButton({
+  source,
+  onPress,
+  accessibilityLabel,
+}: {
+  source: ImageSourcePropType;
+  onPress: () => void;
+  accessibilityLabel: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      style={({ pressed }) => [styles.mapToolButton, pressed && styles.pressed]}
+    >
+      <Image source={source} style={styles.mapToolImage} resizeMode="contain" />
+    </Pressable>
+  );
+}
+
+function BottomNavigation({
+  geologyActive,
+  onMap,
+  onExploration,
+  onDevelopment,
+  onTrade,
+  onTechnology,
+}: {
+  geologyActive: boolean;
+  onMap: () => void;
+  onExploration: () => void;
+  onDevelopment: () => void;
+  onTrade: () => void;
+  onTechnology: () => void;
+}) {
+  return (
+    <View style={styles.bottomNav}>
+      <BottomNavButton source={gameAssets.nav.map} active={!geologyActive} onPress={onMap} />
+      <BottomNavButton source={gameAssets.nav.exploration} active={geologyActive} onPress={onExploration} />
+      <BottomNavButton source={gameAssets.nav.development} onPress={onDevelopment} />
+      <BottomNavButton source={gameAssets.nav.trade} onPress={onTrade} />
+      <BottomNavButton source={gameAssets.nav.technologies} onPress={onTechnology} />
+    </View>
+  );
+}
+
+function BottomNavButton({
+  source,
+  active = false,
+  onPress,
+}: {
+  source: ImageSourcePropType;
+  active?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.bottomNavButton, active && styles.bottomNavButtonActive, pressed && styles.pressed]}
+    >
+      <Image source={source} style={styles.bottomNavImage} resizeMode="contain" />
+    </Pressable>
+  );
+}
+
 function TerritoryPanel({
   selectedCell,
   ownedByPlayer,
@@ -471,8 +594,8 @@ function TerritoryPanel({
     <>
       <View style={styles.rowBetween}>
         <View style={styles.flex}>
-          <Text style={styles.eyebrow}>ТЕРРИТОРИЯ</Text>
-          <Text style={styles.cellTitle} numberOfLines={1}>{selectedCell?.h3Index ?? 'Выберите ячейку'}</Text>
+          <Text style={styles.eyebrow}>ВЫБРАННЫЙ УЧАСТОК</Text>
+          <Text style={styles.cellTitle} numberOfLines={1}>{selectedCell?.h3Index ?? 'Выберите ячейку на карте'}</Text>
         </View>
         <View style={[styles.badge, selectedCell?.occupied ? styles.badgeBusy : styles.badgeFree]}>
           <Text style={styles.badgeText}>{selectedCell?.occupied ? 'ЗАНЯТО' : 'СВОБОДНО'}</Text>
@@ -492,37 +615,42 @@ function TerritoryPanel({
           <Text style={styles.infoText}>Владелец: {selectedCell.claim.ownerName ?? 'неизвестно'}</Text>
         </View>
       ) : (
-        <Text style={styles.infoText}>Свободный участок. Его можно исследовать и арендовать.</Text>
+        <Text style={styles.infoText}>Свободный участок. Проведите георазведку, оцените ресурсы и арендуйте территорию.</Text>
       )}
 
-      {selectedCell && !selectedCell.claim ? (
-        <ActionButton
-          busy={action === 'claim'}
-          disabled={action !== null}
-          label="АРЕНДОВАТЬ УЧАСТОК · 5 000 ₡"
-          onPress={onClaim}
-        />
-      ) : null}
+      <View style={styles.actionGrid}>
+        {selectedCell && !selectedCell.claim ? (
+          <ActionButton
+            busy={action === 'claim'}
+            disabled={action !== null}
+            label="АРЕНДОВАТЬ · 5 000 ₡"
+            tone="green"
+            onPress={onClaim}
+          />
+        ) : null}
 
-      {selectedCell && ownedByPlayer && !selectedCell.building ? (
-        <ActionButton
-          busy={action === 'build'}
-          disabled={action !== null}
-          label="ПОСТРОИТЬ ШАХТУ · 10 000 ₡"
-          onPress={onBuild}
-        />
-      ) : null}
+        {selectedCell && ownedByPlayer && !selectedCell.building ? (
+          <ActionButton
+            busy={action === 'build'}
+            disabled={action !== null}
+            label="ПОСТРОИТЬ ШАХТУ · 10 000 ₡"
+            tone="amber"
+            onPress={onBuild}
+          />
+        ) : null}
 
-      <ActionButton
-        busy={scanning}
-        disabled={scanning || !selectedCell || action !== null}
-        label="ПРОВЕСТИ ГЕОРАЗВЕДКУ"
-        onPress={onScan}
-      />
+        <ActionButton
+          busy={scanning}
+          disabled={scanning || !selectedCell || action !== null}
+          label="ПРОВЕСТИ ГЕОРАЗВЕДКУ"
+          tone="cyan"
+          onPress={onScan}
+        />
+      </View>
 
       {loadingExtraction ? (
         <View style={styles.inlineLoading}>
-          <ActivityIndicator size="small" />
+          <ActivityIndicator size="small" color="#38d8ff" />
           <Text style={styles.infoText}>Проверка добычи…</Text>
         </View>
       ) : null}
@@ -530,9 +658,12 @@ function TerritoryPanel({
       {ownedByPlayer && isExtractionBuilding && extraction ? (
         <View style={styles.productionCard}>
           <View style={styles.rowBetween}>
-            <View style={styles.flex}>
-              <Text style={styles.eyebrow}>ДОБЫЧА</Text>
-              <Text style={styles.infoTitle}>{extraction.deposit.resource.name}</Text>
+            <View style={styles.productionTitleRow}>
+              <Image source={resourceIconForCode(extraction.deposit.resource.code)} style={styles.depositIcon} resizeMode="contain" />
+              <View>
+                <Text style={styles.eyebrow}>ДОБЫЧА</Text>
+                <Text style={styles.infoTitle}>{extraction.deposit.resource.name}</Text>
+              </View>
             </View>
             <Text style={styles.productionRate}>{formatNumber(extraction.ratePerHour, 2)} {extraction.deposit.resource.unit}/ч</Text>
           </View>
@@ -556,6 +687,7 @@ function TerritoryPanel({
             busy={action === 'collect'}
             disabled={action !== null || extraction.availableToCollect <= 0}
             label={`ЗАБРАТЬ · ${formatNumber(extraction.availableToCollect, 2)} ${extraction.deposit.resource.unit}`}
+            tone="green"
             onPress={onCollect}
           />
         </View>
@@ -578,17 +710,21 @@ function TerritoryPanel({
 
             return (
               <View key={deposit.id} style={styles.depositCard}>
-                <View style={styles.rowBetween}>
-                  <Text style={styles.depositName}>{deposit.resource.name}</Text>
+                <View style={styles.depositHeader}>
+                  <Image source={resourceIconForCode(deposit.resource.code || deposit.resource.name)} style={styles.depositIcon} resizeMode="contain" />
+                  <View style={styles.flex}>
+                    <Text style={styles.depositName}>{deposit.resource.name}</Text>
+                    <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters)}–{formatNumber(deposit.estimates.depthToMeters)} м</Text>
+                  </View>
                   <Text style={styles.rarity}>R{deposit.resource.rarity}</Text>
                 </View>
                 <Text style={styles.depositText}>Запасы: {formatNumber(deposit.estimates.quantity.min)}–{formatNumber(deposit.estimates.quantity.max)} {deposit.resource.unit}</Text>
-                <Text style={styles.depositText}>Глубина: {formatNumber(deposit.estimates.depthFromMeters)}–{formatNumber(deposit.estimates.depthToMeters)} м</Text>
                 {canStartHere ? (
                   <ActionButton
                     busy={action === 'extract'}
                     disabled={action !== null}
                     label={`НАЧАТЬ ДОБЫЧУ · ${deposit.resource.name.toUpperCase()}`}
+                    tone="amber"
                     onPress={() => onStartExtraction(deposit.id)}
                   />
                 ) : null}
@@ -607,7 +743,10 @@ function TerritoryPanel({
           <Text style={styles.eyebrow}>СКЛАД КОМПАНИИ</Text>
           {inventory.map((item) => (
             <View key={item.resourceId} style={styles.inventoryRow}>
-              <Text style={styles.inventoryName}>{item.name}</Text>
+              <View style={styles.inventoryNameRow}>
+                <Image source={resourceIconForCode(item.code || item.name)} style={styles.inventoryIcon} resizeMode="contain" />
+                <Text style={styles.inventoryName}>{item.name}</Text>
+              </View>
               <Text style={styles.inventoryValue}>{formatNumber(item.quantity, 2)} {item.unit}</Text>
             </View>
           ))}
@@ -639,20 +778,28 @@ function ActionButton({
   busy,
   disabled,
   label,
+  tone = 'cyan',
   onPress,
 }: {
   busy: boolean;
   disabled: boolean;
   label: string;
+  tone?: 'cyan' | 'green' | 'amber';
   onPress: () => void;
 }) {
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.actionButton, disabled && styles.disabled, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.actionButton,
+        tone === 'green' && styles.actionButtonGreen,
+        tone === 'amber' && styles.actionButtonAmber,
+        disabled && styles.disabled,
+        pressed && styles.pressed,
+      ]}
     >
-      {busy ? <ActivityIndicator color="#11161d" /> : <Text style={styles.actionButtonText}>{label}</Text>}
+      {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.actionButtonText}>{label}</Text>}
     </Pressable>
   );
 }
@@ -660,105 +807,232 @@ function ActionButton({
 const absolute = { position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0 };
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0a0f16' },
+  root: { flex: 1, backgroundColor: '#07111a' },
   map: { ...absolute },
-  overlay: { ...absolute, paddingHorizontal: 12, paddingTop: 5 },
+  overlay: { ...absolute, paddingHorizontal: 10, paddingTop: 4 },
   flex: { flex: 1 },
-  topCard: {
+  topHud: {
+    minHeight: 54,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(8,13,20,0.9)',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(5,16,25,0.94)',
     borderWidth: 1,
-    borderColor: 'rgba(242,209,139,0.26)',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    borderColor: 'rgba(56,216,255,0.34)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 10,
   },
-  brand: { color: '#f5c451', fontWeight: '900', fontSize: 18, letterSpacing: 1.5 },
-  status: { color: '#c7ced8', fontSize: 10, marginTop: 2, maxWidth: 235 },
-  geologyButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 9,
+  brandBlock: { flex: 1 },
+  brand: { color: '#f7c84b', fontWeight: '900', fontSize: 17, letterSpacing: 1.5 },
+  status: { color: '#b5c6d3', fontSize: 9, marginTop: 2 },
+  resourceStrip: {
+    flexDirection: 'row',
+    gap: 5,
+    marginTop: 6,
+  },
+  resourceChip: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 5,
+    borderRadius: 12,
+    backgroundColor: 'rgba(5,16,25,0.92)',
     borderWidth: 1,
-    borderColor: 'rgba(245,196,81,0.4)',
-    backgroundColor: 'rgba(245,196,81,0.08)',
+    borderColor: 'rgba(73,170,210,0.28)',
   },
-  geologyButtonActive: { backgroundColor: 'rgba(121,199,255,0.14)', borderColor: 'rgba(121,199,255,0.5)' },
-  geologyButtonText: { color: '#f4e8c8', fontSize: 9, fontWeight: '900', letterSpacing: 0.7 },
+  resourceChipIcon: { width: 34, height: 34 },
+  resourceChipText: { flex: 1, minWidth: 0 },
+  resourceChipName: { color: '#8ca4b7', fontSize: 7, fontWeight: '700' },
+  resourceChipValue: { color: '#eef8ff', fontSize: 10, fontWeight: '900', marginTop: 1 },
   legend: {
     alignSelf: 'flex-start',
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 9,
     marginTop: 6,
     paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 9,
-    backgroundColor: 'rgba(8,13,20,0.84)',
-    maxWidth: '96%',
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(5,16,25,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendDot: { width: 7, height: 7, borderRadius: 4 },
-  freeDot: { backgroundColor: '#1c9b7a' },
-  busyDot: { backgroundColor: '#d95757' },
-  currentDot: { backgroundColor: '#e7b44b' },
-  legendText: { color: '#d7dce3', fontSize: 9 },
-  legendMeta: { color: '#8290a1', fontSize: 8 },
-  spacer: { flex: 1 },
-  bottomCard: {
-    maxHeight: '32%',
-    minHeight: 176,
-    marginBottom: 5,
+  freeDot: { backgroundColor: '#21d7a8' },
+  busyDot: { backgroundColor: '#f35f5f' },
+  currentDot: { backgroundColor: '#f6c744' },
+  legendText: { color: '#d6e1e8', fontSize: 8 },
+  mapTools: {
+    position: 'absolute',
+    right: 9,
+    top: 142,
+    gap: 7,
+  },
+  mapToolButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 14,
     overflow: 'hidden',
-    backgroundColor: 'rgba(8,13,20,0.97)',
+    backgroundColor: 'rgba(5,16,25,0.9)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.35,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 8,
+  },
+  mapToolImage: { width: '100%', height: '100%' },
+  spacer: { flex: 1 },
+  bottomNav: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 5,
+    marginBottom: 6,
+    paddingHorizontal: 6,
+  },
+  bottomNavButton: {
+    flex: 1,
+    maxWidth: 72,
+    height: 58,
+    borderRadius: 14,
+    overflow: 'hidden',
+    opacity: 0.78,
+    backgroundColor: 'rgba(5,16,25,0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(73,170,210,0.16)',
+  },
+  bottomNavButtonActive: {
+    opacity: 1,
+    borderColor: 'rgba(56,216,255,0.8)',
+    shadowColor: '#38d8ff',
+    shadowOpacity: 0.45,
+    shadowRadius: 7,
+    elevation: 8,
+  },
+  bottomNavImage: { width: '100%', height: '100%' },
+  bottomCard: {
+    maxHeight: '31%',
+    minHeight: 162,
+    marginBottom: 4,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(5,16,25,0.97)',
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(242,209,139,0.24)',
+    borderColor: 'rgba(56,216,255,0.25)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -3 },
+    elevation: 10,
   },
-  bottomCardExpanded: { maxHeight: '67%' },
-  sheetHandleArea: { alignItems: 'center', paddingTop: 7, paddingBottom: 3 },
-  sheetHandle: { width: 48, height: 4, borderRadius: 3, backgroundColor: '#4d5868' },
-  sheetHint: { color: '#697587', fontSize: 8, marginTop: 3 },
+  bottomCardExpanded: { maxHeight: '64%' },
+  sheetHandleArea: { alignItems: 'center', paddingTop: 6, paddingBottom: 3 },
+  sheetHandle: { width: 52, height: 4, borderRadius: 3, backgroundColor: '#3f7890' },
+  sheetHint: { color: '#6e8798', fontSize: 8, marginTop: 3 },
   scroll: { flexGrow: 0 },
-  scrollContent: { paddingHorizontal: 14, paddingTop: 5, paddingBottom: 14 },
+  scrollContent: { paddingHorizontal: 13, paddingTop: 4, paddingBottom: 14 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  eyebrow: { color: '#8d99a8', fontSize: 9, letterSpacing: 1.25, fontWeight: '700' },
-  cellTitle: { color: '#f6f7f9', fontSize: 13, fontWeight: '800', marginTop: 2 },
-  badge: { borderRadius: 18, paddingHorizontal: 9, paddingVertical: 5 },
-  badgeBusy: { backgroundColor: 'rgba(184,58,58,0.28)' },
-  badgeFree: { backgroundColor: 'rgba(28,123,110,0.28)' },
-  badgeText: { color: '#f4e8c8', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 },
-  infoBox: { marginTop: 9, padding: 9, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.045)' },
-  infoTitle: { color: '#f5c451', fontSize: 14, fontWeight: '800' },
-  infoText: { color: '#b8c0cc', fontSize: 11, marginTop: 4 },
-  actionButton: { marginTop: 8, minHeight: 39, justifyContent: 'center', alignItems: 'center', borderRadius: 11, backgroundColor: '#f5c451' },
-  actionButtonText: { color: '#11161d', fontSize: 10, fontWeight: '900', letterSpacing: 0.55 },
-  disabled: { opacity: 0.45 },
-  pressed: { opacity: 0.82 },
+  eyebrow: { color: '#6e91a8', fontSize: 8, letterSpacing: 1.15, fontWeight: '800' },
+  cellTitle: { color: '#f4f9fc', fontSize: 12, fontWeight: '800', marginTop: 2 },
+  badge: { borderRadius: 18, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1 },
+  badgeBusy: { backgroundColor: 'rgba(184,58,58,0.18)', borderColor: 'rgba(243,95,95,0.45)' },
+  badgeFree: { backgroundColor: 'rgba(28,123,110,0.18)', borderColor: 'rgba(33,215,168,0.42)' },
+  badgeText: { color: '#f1f8fb', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 },
+  infoBox: {
+    marginTop: 8,
+    padding: 9,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  infoTitle: { color: '#f4c957', fontSize: 13, fontWeight: '800' },
+  infoText: { color: '#b6c3cc', fontSize: 10, marginTop: 4 },
+  actionGrid: { marginTop: 3 },
+  actionButton: {
+    marginTop: 7,
+    minHeight: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 11,
+    backgroundColor: '#08394a',
+    borderWidth: 1,
+    borderColor: '#27cce9',
+  },
+  actionButtonGreen: { backgroundColor: '#0b472e', borderColor: '#31df8b' },
+  actionButtonAmber: { backgroundColor: '#4e350b', borderColor: '#f4b53c' },
+  actionButtonText: { color: '#f7fbfd', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+  disabled: { opacity: 0.42 },
+  pressed: { opacity: 0.75, transform: [{ scale: 0.98 }] },
   inlineLoading: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  productionCard: { marginTop: 10, padding: 10, borderRadius: 11, backgroundColor: 'rgba(245,196,81,0.08)', borderWidth: 1, borderColor: 'rgba(245,196,81,0.25)' },
-  productionRate: { color: '#f5c451', fontSize: 10, fontWeight: '900' },
-  economicsBox: { marginTop: 8, padding: 8, borderRadius: 9, backgroundColor: 'rgba(121,199,255,0.07)', borderWidth: 1, borderColor: 'rgba(121,199,255,0.16)' },
-  economicsTitle: { color: '#79c7ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  productionCard: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(9,51,64,0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.26)',
+  },
+  productionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  productionRate: { color: '#47e5bc', fontSize: 10, fontWeight: '900' },
+  economicsBox: {
+    marginTop: 8,
+    padding: 8,
+    borderRadius: 9,
+    backgroundColor: 'rgba(121,199,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(121,199,255,0.14)',
+  },
+  economicsTitle: { color: '#38d8ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
   economicsText: { color: '#aebdca', fontSize: 9, marginTop: 3 },
   operatingCost: { color: '#f5c451', fontSize: 9, fontWeight: '900', marginTop: 4 },
   scanResults: { marginTop: 11 },
-  scanId: { color: '#687586', fontSize: 8, marginBottom: 4 },
+  scanId: { color: '#687f90', fontSize: 8, marginBottom: 4 },
   statsRow: { flexDirection: 'row', gap: 7, marginBottom: 8 },
-  stat: { flex: 1, padding: 8, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.045)' },
-  statValue: { color: '#f5c451', fontSize: 12, fontWeight: '800' },
-  statLabel: { color: '#8792a2', fontSize: 8, marginTop: 2 },
-  depositCard: { marginTop: 6, padding: 9, borderRadius: 10, backgroundColor: 'rgba(28,123,110,0.12)', borderWidth: 1, borderColor: 'rgba(28,123,110,0.28)' },
-  depositName: { color: '#f3f4f6', fontSize: 12, fontWeight: '800' },
+  stat: {
+    flex: 1,
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,216,255,0.09)',
+  },
+  statValue: { color: '#38d8ff', fontSize: 12, fontWeight: '800' },
+  statLabel: { color: '#879baa', fontSize: 8, marginTop: 2 },
+  depositCard: {
+    marginTop: 6,
+    padding: 9,
+    borderRadius: 11,
+    backgroundColor: 'rgba(13,56,63,0.58)',
+    borderWidth: 1,
+    borderColor: 'rgba(33,215,168,0.24)',
+  },
+  depositHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  depositIcon: { width: 46, height: 46 },
+  depositName: { color: '#f3f7fa', fontSize: 12, fontWeight: '800' },
   rarity: { color: '#f5c451', fontSize: 9, fontWeight: '900' },
-  depositText: { color: '#aeb7c3', fontSize: 10, marginTop: 3 },
-  emptyText: { color: '#9ba5b2', fontSize: 11, marginTop: 7 },
-  inventoryBox: { marginTop: 11, padding: 10, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.035)' },
+  depositText: { color: '#aebcc6', fontSize: 9, marginTop: 3 },
+  emptyText: { color: '#91a5b2', fontSize: 10, marginTop: 7 },
+  inventoryBox: {
+    marginTop: 11,
+    padding: 10,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.028)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.055)',
+  },
   inventoryRow: { marginTop: 7, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  inventoryName: { color: '#cbd2dc', fontSize: 11 },
-  inventoryValue: { color: '#f5c451', fontSize: 11, fontWeight: '800' },
-  devText: { color: '#5f6a78', fontSize: 8, marginTop: 11 },
+  inventoryNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  inventoryIcon: { width: 28, height: 28 },
+  inventoryName: { color: '#cbd7df', fontSize: 10 },
+  inventoryValue: { color: '#47e5bc', fontSize: 10, fontWeight: '800' },
+  devText: { color: '#536b7a', fontSize: 7, marginTop: 10 },
 });
