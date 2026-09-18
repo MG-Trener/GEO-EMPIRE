@@ -15,11 +15,21 @@ type KnownDepositRow = {
   confidence: string | null;
   estimated_quantity_min: string | null;
   estimated_quantity_max: string | null;
+  estimated_depth_from_m: string | null;
+  estimated_depth_to_m: string | null;
+  estimated_density_min: string | null;
+  estimated_density_max: string | null;
   updated_at: string;
   completed_studies: string;
   active_method: string | null;
   active_completes_at: string | null;
 };
+
+function midpoint(minValue: string | null, maxValue: string | null): number {
+  const min = Number(minValue ?? 0);
+  const max = Number(maxValue ?? min);
+  return Math.round(((min + max) / 2) * 10_000) / 10_000;
+}
 
 function buildInvestmentProfile(
   resourceCode: string,
@@ -30,8 +40,8 @@ function buildInvestmentProfile(
   const marketPrice = getResourceMarketPrice(resourceCode);
   const safeMin = Math.max(0, quantityMin);
   const safeMax = Math.max(safeMin, quantityMax);
-  const midpoint = (safeMin + safeMax) / 2;
-  const uncertainty = midpoint > 0 ? (safeMax - safeMin) / midpoint : 1;
+  const midpointValue = (safeMin + safeMax) / 2;
+  const uncertainty = midpointValue > 0 ? (safeMax - safeMin) / midpointValue : 1;
 
   const risk = confidence >= 0.95
     ? 'low'
@@ -82,6 +92,10 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
           k.confidence::text,
           k.estimated_quantity_min::text,
           k.estimated_quantity_max::text,
+          k.estimated_depth_from_m::text,
+          k.estimated_depth_to_m::text,
+          k.estimated_density_min::text,
+          k.estimated_density_max::text,
           k.updated_at::text,
           (
             SELECT count(*)::text
@@ -111,7 +125,7 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
           k.updated_at DESC,
           r.rarity DESC,
           r.name_ru
-        LIMIT 100
+        LIMIT 250
       `,
       [parsed.data.playerId],
     );
@@ -122,6 +136,8 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
         const confidence = Number(row.confidence ?? 0);
         const quantityMin = Number(row.estimated_quantity_min ?? 0);
         const quantityMax = Number(row.estimated_quantity_max ?? 0);
+        const densityMin = Number(row.estimated_density_min ?? 0);
+        const densityMax = Number(row.estimated_density_max ?? densityMin);
 
         return {
           id: row.deposit_id,
@@ -136,6 +152,16 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
           estimatedQuantity: {
             min: quantityMin,
             max: quantityMax,
+          },
+          estimates: {
+            depthFromMeters: Number(row.estimated_depth_from_m ?? 0),
+            depthToMeters: Number(row.estimated_depth_to_m ?? 0),
+            density: {
+              min: densityMin,
+              max: densityMax,
+              value: midpoint(row.estimated_density_min, row.estimated_density_max),
+            },
+            confidence,
           },
           investment: buildInvestmentProfile(
             row.resource_code,
