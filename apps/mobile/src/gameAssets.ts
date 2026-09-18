@@ -50,6 +50,8 @@ export const gameAssets = {
     route: require('../assets/images/sheet_ru_1/sheet_ru_1_element_015.png'),
     favorite: require('../assets/images/sheet_ru_1/sheet_ru_1_element_016.png'),
     share: require('../assets/images/sheet_ru_1/sheet_ru_1_element_017.png'),
+    extract: require('../assets/images/sheet_ru_2/sheet_ru_2_element_032.png'),
+    collect: require('../assets/images/sheet_ru_1/sheet_ru_1_element_009.png'),
   },
   mapModes: {
     satellite: require('../assets/images/sheet_ru_1/sheet_ru_1_element_027.png'),
