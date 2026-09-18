@@ -1,0 +1,101 @@
+name: Publish Android Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/app.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EXPO_PUBLIC_API_URL: https://geo-empire-api-public-production.up.railway.app
+      EXPO_PUBLIC_DEMO_PLAYER_ID: 11111111-1111-4111-8111-111111111111
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Read application version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./apps/mobile/app.json').expo.version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "apk=geo-empire-v$VERSION.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Typecheck mobile
+        run: npm --workspace @geo-empire/mobile run typecheck
+
+      - name: Generate Android project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --clean
+
+      - name: Restore stable prototype signing key
+        working-directory: apps/mobile
+        run: base64 -d signing/geo-empire-prototype-debug.keystore.b64 > android/app/debug.keystore
+
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        env:
+          NODE_ENV: production
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare versioned APK
+        shell: bash
+        run: |
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "${{ steps.version.outputs.apk }}"
+          ls -lh "${{ steps.version.outputs.apk }}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          APK="${{ steps.version.outputs.apk }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            gh release create "$TAG" "$APK" \
+              --target "$GITHUB_SHA" \
+              --title "GEO EMPIRE v$VERSION" \
+              --generate-notes
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: geo-empire-v${{ steps.version.outputs.version }}
+          path: ${{ steps.version.outputs.apk }}
+          if-no-files-found: error
+          retention-days: 30
