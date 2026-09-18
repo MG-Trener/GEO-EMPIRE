@@ -1,13 +1,15 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
 import { cellToBoundary, cellToLatLng } from 'h3-js';
 import type { FeatureCollection, Point, Polygon } from 'geojson';
-import type { GeologyScanResponse } from './types';
+import { getKnownDeposits } from './api';
+import type { GeologyScanResponse, KnownDeposit } from './types';
 
 type DepositCell = {
   density: number;
   rarity: number;
   confidence: number;
+  weight: number;
 };
 
 export function GeologyHeatmapLayer({
@@ -19,42 +21,82 @@ export function GeologyHeatmapLayer({
   resourceCode: string | null;
   visible: boolean;
 }) {
+  const [knownDeposits, setKnownDeposits] = useState<KnownDeposit[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getKnownDeposits()
+      .then((result) => { if (!cancelled) setKnownDeposits(result.deposits); })
+      .catch(() => { if (!cancelled) setKnownDeposits([]); });
+    return () => { cancelled = true; };
+  }, [scan?.scanId]);
+
   const depositsByCell = useMemo(() => {
     const byCell = new Map<string, DepositCell>();
-    if (!visible || !scan || !resourceCode) return byCell;
+    if (!visible) return byCell;
 
-    for (const deposit of scan.deposits) {
-      if (deposit.resource.code !== resourceCode || !deposit.h3Index) continue;
-
-      const density = Math.max(0, Math.min(1, Number(deposit.estimates.density?.value ?? 0)));
-      const confidence = Math.max(0, Math.min(1, Number(deposit.estimates.confidence ?? 0)));
-      const rarity = Math.max(1, Number(deposit.resource.rarity ?? 1));
-      const current = byCell.get(deposit.h3Index);
-
-      byCell.set(deposit.h3Index, {
+    const add = (input: {
+      h3Index: string;
+      code: string;
+      density: number;
+      confidence: number;
+      rarity: number;
+    }) => {
+      if (resourceCode && input.code !== resourceCode) return;
+      const density = Math.max(0.03, Math.min(1, Number(input.density ?? 0)));
+      const confidence = Math.max(0.08, Math.min(1, Number(input.confidence ?? 0)));
+      const rarity = Math.max(1, Number(input.rarity ?? 1));
+      const current = byCell.get(input.h3Index);
+      const weight = Math.max(0.05, Math.min(1, density * (0.45 + confidence * 0.55)));
+      byCell.set(input.h3Index, {
         density: Math.max(density, current?.density ?? 0),
         confidence: Math.max(confidence, current?.confidence ?? 0),
         rarity: Math.max(rarity, current?.rarity ?? 1),
+        weight: Math.max(weight, current?.weight ?? 0),
+      });
+    };
+
+    for (const deposit of knownDeposits) {
+      add({
+        h3Index: deposit.h3Index,
+        code: deposit.resource.code,
+        density: deposit.estimates.density.value,
+        confidence: deposit.estimates.confidence,
+        rarity: deposit.resource.rarity,
+      });
+    }
+
+    for (const deposit of scan?.deposits ?? []) {
+      add({
+        h3Index: deposit.h3Index,
+        code: deposit.resource.code,
+        density: deposit.estimates.density?.value ?? 0,
+        confidence: deposit.estimates.confidence ?? 0,
+        rarity: deposit.resource.rarity ?? 1,
       });
     }
 
     return byCell;
-  }, [resourceCode, scan, visible]);
+  }, [knownDeposits, resourceCode, scan, visible]);
 
   const heatData = useMemo<FeatureCollection<Polygon>>(() => ({
     type: 'FeatureCollection',
     features: [...depositsByCell.entries()].flatMap(([h3Index, sample]) => {
-      const boundary = cellToBoundary(h3Index, true) as [number, number][];
-      if (!boundary.length) return [];
-      return [{
-        type: 'Feature' as const,
-        id: `heat-${h3Index}`,
-        properties: sample,
-        geometry: {
-          type: 'Polygon' as const,
-          coordinates: [[...boundary, boundary[0]]],
-        },
-      }];
+      try {
+        const boundary = cellToBoundary(h3Index, true) as [number, number][];
+        if (!boundary.length) return [];
+        return [{
+          type: 'Feature' as const,
+          id: `heat-${h3Index}`,
+          properties: sample,
+          geometry: {
+            type: 'Polygon' as const,
+            coordinates: [[...boundary, boundary[0]]],
+          },
+        }];
+      } catch {
+        return [];
+      }
     }),
   }), [depositsByCell]);
 
@@ -67,10 +109,7 @@ export function GeologyHeatmapLayer({
           type: 'Feature' as const,
           id: `deposit-marker-${h3Index}`,
           properties: sample,
-          geometry: {
-            type: 'Point' as const,
-            coordinates: [lng, lat],
-          },
+          geometry: { type: 'Point' as const, coordinates: [lng, lat] },
         }];
       } catch {
         return [];
@@ -78,25 +117,56 @@ export function GeologyHeatmapLayer({
     }),
   }), [depositsByCell]);
 
+  if (!visible || depositsByCell.size === 0) return null;
+
   return (
     <>
-      <GeoJSONSource id="resource-density-heatmap" data={heatData}>
+      <GeoJSONSource id="resource-thermal-points" data={markerData}>
+        <Layer
+          id="resource-thermal-glow"
+          type="heatmap"
+          paint={{
+            'heatmap-weight': ['get', 'weight'],
+            'heatmap-intensity': 1.65,
+            'heatmap-radius': [
+              'interpolate', ['linear'], ['zoom'],
+              12, 18,
+              16, 34,
+              19, 58,
+            ],
+            'heatmap-opacity': 0.88,
+            'heatmap-color': [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0, 'rgba(0,0,0,0)',
+              0.12, 'rgba(35,215,255,0.25)',
+              0.32, 'rgba(44,214,184,0.48)',
+              0.52, 'rgba(244,218,75,0.68)',
+              0.72, 'rgba(244,137,47,0.82)',
+              0.9, 'rgba(231,62,51,0.94)',
+              1, 'rgba(255,245,180,1)',
+            ],
+          } as never}
+        />
+      </GeoJSONSource>
+
+      <GeoJSONSource id="resource-density-hexes" data={heatData}>
         <Layer
           id="resource-density-fill"
           type="fill"
           paint={{
             'fill-color': [
               'interpolate', ['linear'], ['get', 'density'],
-              0, '#173641',
-              0.25, '#2f8d92',
-              0.5, '#d1b148',
-              0.75, '#e77c34',
-              1, '#e33d32',
+              0, '#174655',
+              0.25, '#20a9ad',
+              0.5, '#d7bd42',
+              0.75, '#ef7e31',
+              1, '#ed4035',
             ],
             'fill-opacity': [
               'interpolate', ['linear'], ['get', 'confidence'],
-              0, 0.28,
-              1, 0.76,
+              0, 0.16,
+              0.5, 0.3,
+              1, 0.5,
             ],
           } as never}
         />
@@ -106,16 +176,16 @@ export function GeologyHeatmapLayer({
           paint={{
             'line-color': [
               'interpolate', ['linear'], ['get', 'density'],
-              0, '#5f8792',
-              0.5, '#f0cf61',
-              1, '#fff1b0',
+              0, '#5fb9c7',
+              0.5, '#f5d758',
+              1, '#fff0ad',
             ],
             'line-width': [
-              'interpolate', ['linear'], ['get', 'density'],
-              0, 1,
-              1, 2.4,
+              'interpolate', ['linear'], ['get', 'confidence'],
+              0, 0.8,
+              1, 2.3,
             ],
-            'line-opacity': 0.8,
+            'line-opacity': 0.88,
           } as never}
         />
       </GeoJSONSource>
@@ -127,7 +197,7 @@ export function GeologyHeatmapLayer({
           paint={{
             'circle-radius': [
               'interpolate', ['linear'], ['get', 'density'],
-              0, 9,
+              0, 8,
               1, 17,
             ],
             'circle-color': [
@@ -136,8 +206,8 @@ export function GeologyHeatmapLayer({
               ['>=', ['get', 'rarity'], 3], '#f4bd42',
               '#38d8ff',
             ],
-            'circle-opacity': 0.16,
-            'circle-blur': 0.35,
+            'circle-opacity': 0.18,
+            'circle-blur': 0.4,
           } as never}
         />
         <Layer
@@ -157,22 +227,17 @@ export function GeologyHeatmapLayer({
             ],
             'circle-opacity': [
               'interpolate', ['linear'], ['get', 'confidence'],
-              0, 0.55,
-              1, 0.98,
+              0, 0.6,
+              1, 1,
             ],
-            'circle-stroke-color': '#f5fbff',
-            'circle-stroke-width': 1.4,
-            'circle-stroke-opacity': 0.9,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.5,
           } as never}
         />
         <Layer
           id="resource-deposit-center"
           type="circle"
-          paint={{
-            'circle-radius': 2,
-            'circle-color': '#ffffff',
-            'circle-opacity': 0.92,
-          } as never}
+          paint={{ 'circle-radius': 2, 'circle-color': '#ffffff', 'circle-opacity': 0.95 } as never}
         />
       </GeoJSONSource>
     </>
