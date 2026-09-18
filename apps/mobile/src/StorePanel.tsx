@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getStore, purchaseStorePack } from './api';
+import { Artwork } from './Artwork';
 import type { StoreCatalog, StorePack } from './types';
+import { packArtworkUri } from './visualAssets';
 
 type Props = {
   onMessage?: (message: string) => void;
@@ -86,7 +88,13 @@ export function StorePanel({ onMessage, onPurchased }: Props) {
         const disabled = buyingCode !== null || catalog.wallet.premium < pack.premiumPrice;
         return (
           <View key={pack.code} style={styles.packCard}>
-            <View style={styles.rowBetween}>
+            <View style={styles.packHeader}>
+              <Artwork
+                uri={packArtworkUri(pack.code)}
+                label={pack.name}
+                size={64}
+                radius={12}
+              />
               <View style={styles.flex}>
                 {pack.badge ? <Text style={styles.badge}>{pack.badge}</Text> : null}
                 <Text style={styles.packName}>{pack.name}</Text>
@@ -141,7 +149,7 @@ const styles = StyleSheet.create({
   soft: { color: '#e7c66c', fontSize: 11, fontWeight: '800' },
   premium: { color: '#b88add', fontSize: 14, fontWeight: '900' },
   packCard: { backgroundColor: '#101922', borderRadius: 12, borderWidth: 1, borderColor: '#2a3541', padding: 12 },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  packHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   badge: { color: '#c79ce5', fontSize: 8, fontWeight: '900', letterSpacing: 1.1, marginBottom: 3 },
   packName: { color: '#edf2f4', fontSize: 15, fontWeight: '900' },
   packDescription: { color: '#8395a0', fontSize: 10, lineHeight: 15, marginTop: 4 },

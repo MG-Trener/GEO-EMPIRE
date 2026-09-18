@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { DEMO_PLAYER_ID, getApiUrl } from './api';
+import { Artwork } from './Artwork';
 import { DepositInvestigationPanel } from './DepositInvestigationPanel';
 import { DevelopmentProjectPanel } from './DevelopmentProjectPanel';
+import { resourceArtworkUri } from './visualAssets';
 
 type InvestmentRisk = 'low' | 'moderate' | 'elevated' | 'high';
 
@@ -127,6 +129,11 @@ export function KnownDepositsPanel({ onMessage }: { onMessage?: (message: string
                 pressed && styles.pressed,
               ]}
             >
+              <Artwork
+                uri={resourceArtworkUri(deposit.resource.code)}
+                label={deposit.resource.name}
+                size={46}
+              />
               <View style={styles.flex}>
                 <View style={styles.nameRow}>
                   <Text style={styles.depositName}>{deposit.resource.name}</Text>
@@ -172,6 +179,12 @@ function InvestmentCard({ deposit }: { deposit: KnownDeposit }) {
   return (
     <View style={styles.investmentCard}>
       <View style={styles.headerRow}>
+        <Artwork
+          uri={resourceArtworkUri(deposit.resource.code)}
+          label={deposit.resource.name}
+          size={54}
+          radius={12}
+        />
         <View style={styles.flex}>
           <Text style={styles.investmentEyebrow}>ИНВЕСТИЦИОННЫЙ ПРОФИЛЬ</Text>
           <Text style={styles.investmentTitle}>{deposit.resource.name}</Text>
@@ -212,7 +225,7 @@ const styles = StyleSheet.create({
   refreshButton: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(121,199,255,0.09)' },
   refreshText: { color: '#79c7ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.5 },
   list: { gap: 6 },
-  depositRow: { flexDirection: 'row', gap: 10, padding: 9, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  depositRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 9, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
   depositRowActive: { backgroundColor: 'rgba(28,123,110,0.11)', borderColor: 'rgba(105,169,149,0.34)' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   depositName: { color: '#f3f5f6', fontSize: 11, fontWeight: '800' },
