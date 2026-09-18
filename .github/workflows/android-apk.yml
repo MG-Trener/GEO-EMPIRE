@@ -55,6 +55,10 @@ jobs:
         working-directory: apps/mobile
         run: npx expo prebuild --platform android --clean
 
+      - name: Restore stable prototype signing key
+        working-directory: apps/mobile
+        run: base64 -d signing/geo-empire-prototype-debug.keystore.b64 > android/app/debug.keystore
+
       - name: Build standalone release APK
         working-directory: apps/mobile/android
         env:
