@@ -2,10 +2,10 @@ export const GEOLOGY_RANGE_METERS = [30, 50, 75, 120, 180, 250, 350, 500, 750, 1
 export const GEOLOGY_COVERAGE_RINGS = [0, 0, 1, 1, 2, 2, 3, 4, 5, 6] as const;
 export const GEOLOGY_MAX_DEPTH_METERS = [50, 75, 100, 150, 250, 400, 600, 900, 1300, 2000] as const;
 
-// Accuracy is now useful from the very first scan. Common shallow deposits can
-// enter a pilot project at starter accuracy, while deeper/rarer projects still
-// need investment in better geology before approval.
-export const GEOLOGY_ACCURACY_ERROR = [0.45, 0.35, 0.27, 0.20, 0.15, 0.11, 0.08, 0.06, 0.04, 0.02] as const;
+// The starter survey is deliberately good enough to validate a shallow common
+// deposit. Progression still matters for better estimates, but depth and
+// sensitivity remain the main gates for valuable deposits.
+export const GEOLOGY_ACCURACY_ERROR = [0.15, 0.12, 0.10, 0.08, 0.065, 0.05, 0.04, 0.03, 0.025, 0.02] as const;
 export const GEOLOGY_SENSITIVITY_RARITY = [2, 3, 4, 5, 6, 7, 8, 9, 9, 10] as const;
 
 export const GEOLOGY_SKILL_KEYS = ['range', 'coverage', 'depth', 'accuracy', 'sensitivity'] as const;
