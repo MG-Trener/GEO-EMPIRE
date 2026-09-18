@@ -52,6 +52,18 @@ export async function bootstrapPlayer(input: {
   });
 }
 
+export async function resetPlayerForTesting(authSubject: string): Promise<{
+  status: 'reset';
+  testGrant: { soft: number; premium: number; everyResource: number };
+  player: PlayerSummary;
+}> {
+  return requestJson(`${API_URL}/api/v1/onboarding/reset-for-testing`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ authSubject }),
+  });
+}
+
 export async function locateWorld(lat: number, lng: number, ring = 2): Promise<LocateResponse> {
   const params = new URLSearchParams({
     lat: String(lat),
