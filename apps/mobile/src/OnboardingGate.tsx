@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import * as Application from 'expo-application';
 import App from '../App';
+import { AppUpdateBanner } from './AppUpdateBanner';
 import { bootstrapPlayer, getApiUrl, setActivePlayerId } from './api';
 import { FirstMissionGuide } from './FirstMissionGuide';
 import { gameAssets } from './gameAssets';
@@ -101,7 +102,13 @@ export function OnboardingGate() {
   };
 
   if (stage === 'ready' && player) {
-    return <View style={styles.gameRoot}><App /><FirstMissionGuide playerId={player.id} initialPlayer={player} /></View>;
+    return (
+      <View style={styles.gameRoot}>
+        <App />
+        <FirstMissionGuide playerId={player.id} initialPlayer={player} />
+        <AppUpdateBanner />
+      </View>
+    );
   }
 
   return (
