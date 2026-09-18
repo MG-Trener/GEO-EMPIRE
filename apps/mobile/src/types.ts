@@ -135,6 +135,7 @@ export type GeologyScanResponse = {
       depthFromMeters: number;
       depthToMeters: number;
       quality: number;
+      density: { min: number; max: number; value: number };
       confidence: number;
     };
   }>;
