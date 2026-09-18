@@ -5,7 +5,9 @@ import type {
   GeologySkillKey,
   GeologyUpgradeCatalog,
   GeologyUpgradeResponse,
+  IndustrialTechnologyKey,
   InventoryItem,
+  KnownDepositsResponse,
   LocateResponse,
   MarketCatalog,
   MarketSaleResponse,
@@ -13,6 +15,8 @@ import type {
   StartExtractionResponse,
   StoreCatalog,
   StorePurchaseResponse,
+  TechnologyCatalog,
+  TechnologyUpgradeResponse,
 } from './types';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
@@ -71,7 +75,6 @@ export async function locateWorld(lat: number, lng: number, ring = 2): Promise<L
     resolution: '12',
     ring: String(ring),
   });
-
   return requestJson<LocateResponse>(`${API_URL}/api/v1/world/locate?${params.toString()}`);
 }
 
@@ -98,6 +101,33 @@ export async function upgradeGeology(input: {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ skill: input.skill, currency: input.currency ?? 'soft' }),
     },
+  );
+}
+
+export async function getTechnologyCatalog(playerId = DEMO_PLAYER_ID): Promise<TechnologyCatalog> {
+  return requestJson<TechnologyCatalog>(
+    `${API_URL}/api/v1/players/${encodeURIComponent(playerId)}/technologies`,
+  );
+}
+
+export async function upgradeTechnology(input: {
+  techKey: IndustrialTechnologyKey;
+  playerId?: string;
+}): Promise<TechnologyUpgradeResponse> {
+  const playerId = input.playerId ?? DEMO_PLAYER_ID;
+  return requestJson<TechnologyUpgradeResponse>(
+    `${API_URL}/api/v1/players/${encodeURIComponent(playerId)}/technologies`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ techKey: input.techKey }),
+    },
+  );
+}
+
+export async function getKnownDeposits(playerId = DEMO_PLAYER_ID): Promise<KnownDepositsResponse> {
+  return requestJson<KnownDepositsResponse>(
+    `${API_URL}/api/v1/geology/${encodeURIComponent(playerId)}/deposits`,
   );
 }
 
