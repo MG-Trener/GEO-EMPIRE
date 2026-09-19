@@ -117,9 +117,10 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       );
       const scanId = scanResult.rows[0].id;
 
-      // A historical cell may contain several geological horizons for the same
-      // commodity. A scan point represents RESOURCE TYPES, so keep the shallowest
-      // visible horizon of each resource and expose at most one row per resource.
+      // Older generated worlds can contain several resolution-12 deposits very
+      // close to one another. Treat all child cells of the same resolution-11
+      // parent as a single geological point and expose only its best visible
+      // representative. New world generation already follows the same rule.
       await client.query(
         `
           WITH target AS (
@@ -132,9 +133,9 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             SELECT
               d.*,
               row_number() OVER (
-                PARTITION BY d.cell_h3, d.resource_id
-                ORDER BY d.depth_from_m, d.id
-              ) AS resource_rank
+                PARTITION BY h3_cell_to_parent(d.cell_h3, 11)
+                ORDER BY d.depth_from_m, r.rarity, d.id
+              ) AS geology_rank
             FROM scanned_cells s
             JOIN resource_deposits d ON d.cell_h3 = s.cell
             JOIN resources r ON r.id = d.resource_id
@@ -144,7 +145,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
               AND r.rarity <= $5
           ),
           visible AS (
-            SELECT * FROM ranked_visible WHERE resource_rank = 1
+            SELECT * FROM ranked_visible WHERE geology_rank = 1
           )
           INSERT INTO player_deposit_knowledge (
             player_id,
@@ -230,9 +231,9 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
               k.estimated_density_max::text,
               k.confidence::text,
               row_number() OVER (
-                PARTITION BY d.cell_h3, d.resource_id
-                ORDER BY d.depth_from_m, d.id
-              ) AS resource_rank
+                PARTITION BY h3_cell_to_parent(d.cell_h3, 11)
+                ORDER BY d.depth_from_m, r.rarity, d.id
+              ) AS geology_rank
             FROM scanned_cells s
             JOIN resource_deposits d ON d.cell_h3 = s.cell
             JOIN player_deposit_knowledge k ON k.deposit_id = d.id AND k.player_id = $4
@@ -249,7 +250,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             estimated_quality, estimated_density_min, estimated_density_max,
             confidence
           FROM ranked
-          WHERE resource_rank = 1
+          WHERE geology_rank = 1
           ORDER BY h3_index, rarity, resource_code
         `,
         [
