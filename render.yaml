@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: geo-empire-api
+    runtime: node
+    plan: free
+    branch: main
+    autoDeploy: true
+    buildCommand: npm ci --include=dev && npm run build:api
+    startCommand: npm --workspace @geo-empire/api run start
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - apps/api/**
+        - database/**
+        - package.json
+        - package-lock.json
+        - render.yaml
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false
