@@ -24,12 +24,17 @@ type Props = {
   onStartExtraction: (depositId: string) => void;
 };
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function formatNumber(value: number, maxDigits = 0): string {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: maxDigits }).format(value);
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: maxDigits }).format(finiteNumber(value));
 }
 
 function formatClock(seconds: number): string {
-  const safe = Math.max(0, Math.ceil(seconds));
+  const safe = Math.max(0, Math.ceil(finiteNumber(seconds)));
   const hours = Math.floor(safe / 3600);
   const minutes = Math.floor((safe % 3600) / 60);
   const rest = safe % 60;
@@ -98,19 +103,35 @@ export function FirstMiningTerritoryPanel({
 
   const liveExtraction = useMemo(() => {
     if (!extraction) return null;
-    const capacity = Math.max(0.01, extraction.ratePerHour * extraction.maxBufferHours);
+
+    const ratePerHour = Math.max(0, finiteNumber(extraction.ratePerHour));
+    const maxBufferHours = Math.max(0, finiteNumber(extraction.maxBufferHours));
+    const capacity = Math.max(0.01, ratePerHour * maxBufferHours);
+    const reportedAvailable = Math.max(0, finiteNumber(extraction.availableToCollect));
+    const depositRemaining = Math.max(0, finiteNumber(extraction.deposit.quantityRemaining));
+
     if (extraction.status !== 'running') {
-      return { available: extraction.availableToCollect, capacity, fill: 0, fullInSeconds: 0 };
+      const available = Math.min(depositRemaining, capacity, reportedAvailable);
+      return {
+        available,
+        capacity,
+        fill: Math.max(0, Math.min(1, available / capacity)),
+        fullInSeconds: 0,
+      };
     }
-    const elapsedHours = Math.max(0, (now - new Date(extraction.lastCollectedAt).getTime()) / 3_600_000);
+
+    const collectedAtMs = Date.parse(String(extraction.lastCollectedAt ?? ''));
+    const elapsedHours = Number.isFinite(collectedAtMs)
+      ? Math.max(0, (now - collectedAtMs) / 3_600_000)
+      : 0;
     const available = Math.min(
-      extraction.deposit.quantityRemaining,
+      depositRemaining,
       capacity,
-      Math.max(extraction.availableToCollect, extraction.ratePerHour * elapsedHours),
+      Math.max(reportedAvailable, ratePerHour * elapsedHours),
     );
     const fill = Math.max(0, Math.min(1, available / capacity));
-    const fullInSeconds = extraction.ratePerHour > 0
-      ? Math.max(0, capacity - available) / extraction.ratePerHour * 3600
+    const fullInSeconds = ratePerHour > 0
+      ? Math.max(0, capacity - available) / ratePerHour * 3600
       : 0;
     return { available, capacity, fill, fullInSeconds };
   }, [extraction, now]);
@@ -136,7 +157,7 @@ export function FirstMiningTerritoryPanel({
       && !extraction
       && primaryDeposit,
   );
-  const scanElapsed = scanning && scanStartedAt ? (now - scanStartedAt) / 1000 : 0;
+  const scanElapsed = scanning && scanStartedAt ? Math.max(0, (now - scanStartedAt) / 1000) : 0;
 
   const stateTitle = constructing
     ? 'Строительство объекта'
@@ -208,7 +229,7 @@ export function FirstMiningTerritoryPanel({
           <Image source={resourceIconForCode(primaryDeposit.resource.code)} style={styles.depositIcon} resizeMode="contain" />
           <View style={styles.flex}>
             <Text style={styles.objectTitle}>{primaryDeposit.resource.name}</Text>
-            <Text style={styles.infoText}>Плотность {Math.round(primaryDeposit.estimates.density.value * 100)}% · достоверность {Math.round(primaryDeposit.estimates.confidence * 100)}%</Text>
+            <Text style={styles.infoText}>Плотность {Math.round(finiteNumber(primaryDeposit.estimates.density.value) * 100)}% · достоверность {Math.round(finiteNumber(primaryDeposit.estimates.confidence) * 100)}%</Text>
             <Text style={styles.infoText}>Глубина {formatNumber(primaryDeposit.estimates.depthFromMeters)}–{formatNumber(primaryDeposit.estimates.depthToMeters)} м</Text>
           </View>
           <Text style={styles.rarity}>R{primaryDeposit.resource.rarity}</Text>
@@ -222,7 +243,7 @@ export function FirstMiningTerritoryPanel({
             <Text style={styles.timer}>{formatClock(construction.remainingSeconds)}</Text>
           </View>
           <ProgressBar progress={construction.progress} tone="amber" />
-          <Text style={styles.progressPercent}>{Math.round(construction.progress * 100)}%</Text>
+          <Text style={styles.progressPercent}>{Math.round(finiteNumber(construction.progress) * 100)}%</Text>
         </View>
       ) : null}
 
@@ -241,7 +262,7 @@ export function FirstMiningTerritoryPanel({
               <Text style={styles.objectTitle}>{extraction.deposit.resource.name}</Text>
               <Text style={styles.productionRate}>{formatNumber(extraction.ratePerHour, 2)} {extraction.deposit.resource.unit}/ч</Text>
             </View>
-            <Text style={styles.timer}>{Math.round(liveExtraction.fill * 100)}%</Text>
+            <Text style={styles.timer}>{Math.round(finiteNumber(liveExtraction.fill) * 100)}%</Text>
           </View>
           <ProgressBar progress={liveExtraction.fill} tone="green" />
           <Text style={styles.infoText}>Склад: {formatNumber(liveExtraction.available, 2)} / {formatNumber(liveExtraction.capacity, 2)} {extraction.deposit.resource.unit}</Text>
@@ -296,11 +317,23 @@ export function FirstMiningTerritoryPanel({
         ) : null}
       </View>
 
+      {!rival && (Boolean(selectedCell.building) || ownedByPlayer || depositsInSelectedCell.length > 0) ? (
+        <View style={styles.secondaryActionArea}>
+          <ActionButton
+            label={scanning ? `РАЗВЕДКА · ${formatClock(scanElapsed)}` : 'ГЕОРАЗВЕДКА'}
+            disabled={scanning || action !== null}
+            busy={scanning}
+            tone="cyan"
+            onPress={onScan}
+          />
+        </View>
+      ) : null}
+
       {scanCapabilities ? (
         <View style={styles.scanInfo}>
           <Text style={styles.scanInfoTitle}>ВОЗМОЖНОСТИ РАЗВЕДКИ</Text>
           <Text style={styles.scanInfoText}>
-            Радиус {formatNumber(scanCapabilities.rangeMeters)} м · глубина {formatNumber(scanCapabilities.maxDepthMeters)} м · точность {Math.round((1 - scanCapabilities.accuracyError) * 100)}%
+            Радиус {formatNumber(scanCapabilities.rangeMeters)} м · глубина {formatNumber(scanCapabilities.maxDepthMeters)} м · точность {Math.round((1 - finiteNumber(scanCapabilities.accuracyError)) * 100)}%
           </Text>
           {scan ? <Text style={styles.scanInfoText}>Последний проход: {scan.capabilities.scannedCellCount} яч. · найдено {scan.deposits.length}</Text> : null}
         </View>
@@ -310,13 +343,14 @@ export function FirstMiningTerritoryPanel({
 }
 
 function ProgressBar({ progress, tone }: { progress: number; tone: 'green' | 'amber' }) {
+  const safeProgress = Math.max(0, Math.min(1, finiteNumber(progress)));
   return (
     <View style={styles.progressTrack}>
       <View
         style={[
           styles.progressFill,
           tone === 'green' ? styles.progressGreen : styles.progressAmber,
-          { width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%` },
+          { width: `${Math.round(safeProgress * 100)}%` },
         ]}
       />
     </View>
@@ -390,6 +424,7 @@ const styles = StyleSheet.create({
   productionRate: { color: '#41dfa8', fontSize: 8.5, fontWeight: '900', marginTop: 2 },
   opex: { color: '#f4c65b', fontSize: 7.5, fontWeight: '800', marginTop: 3 },
   actionArea: { marginTop: 8 },
+  secondaryActionArea: { marginTop: 5 },
   actionButton: { minHeight: 42, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0a4052', borderWidth: 1, borderColor: '#32cce7' },
   actionGreen: { backgroundColor: '#0b4d34', borderColor: '#35df9e' },
   actionAmber: { backgroundColor: '#51370c', borderColor: '#f4bd42' },

@@ -19,16 +19,22 @@ type Props = {
   onExpand: () => void;
 };
 
+function finiteNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function shortNumber(value: number): string {
-  const absolute = Math.abs(value);
-  if (absolute >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-  if (absolute >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (absolute >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value);
+  const safeValue = finiteNumber(value);
+  const absolute = Math.abs(safeValue);
+  if (absolute >= 1_000_000_000) return `${(safeValue / 1_000_000_000).toFixed(1)}B`;
+  if (absolute >= 1_000_000) return `${(safeValue / 1_000_000).toFixed(1)}M`;
+  if (absolute >= 1_000) return `${(safeValue / 1_000).toFixed(1)}K`;
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(safeValue);
 }
 
 function formatClock(seconds: number): string {
-  const safe = Math.max(0, Math.ceil(seconds));
+  const safe = Math.max(0, Math.ceil(finiteNumber(seconds)));
   const hours = Math.floor(safe / 3600);
   const minutes = Math.floor((safe % 3600) / 60);
   const rest = safe % 60;
@@ -87,24 +93,35 @@ export function StrategicCellSummary({
 
   const liveExtraction = useMemo(() => {
     if (!extraction) return null;
+
+    const ratePerHour = Math.max(0, finiteNumber(extraction.ratePerHour));
+    const maxBufferHours = Math.max(0, finiteNumber(extraction.maxBufferHours));
+    const capacity = Math.max(0.01, ratePerHour * maxBufferHours);
+    const reportedAvailable = Math.max(0, finiteNumber(extraction.availableToCollect));
+    const depositRemaining = Math.max(0, finiteNumber(extraction.deposit.quantityRemaining));
+
     if (extraction.status !== 'running') {
+      const available = Math.min(depositRemaining, capacity, reportedAvailable);
       return {
-        available: extraction.availableToCollect,
-        capacity: extraction.ratePerHour * extraction.maxBufferHours,
-        fill: 0,
+        available,
+        capacity,
+        fill: Math.max(0, Math.min(1, available / capacity)),
         fullInSeconds: 0,
       };
     }
-    const elapsedHours = Math.max(0, (now - new Date(extraction.lastCollectedAt).getTime()) / 3_600_000);
-    const capacity = Math.max(0.01, extraction.ratePerHour * extraction.maxBufferHours);
+
+    const collectedAtMs = Date.parse(String(extraction.lastCollectedAt ?? ''));
+    const elapsedHours = Number.isFinite(collectedAtMs)
+      ? Math.max(0, (now - collectedAtMs) / 3_600_000)
+      : 0;
     const available = Math.min(
-      extraction.deposit.quantityRemaining,
+      depositRemaining,
       capacity,
-      Math.max(extraction.availableToCollect, extraction.ratePerHour * elapsedHours),
+      Math.max(reportedAvailable, ratePerHour * elapsedHours),
     );
     const fill = Math.max(0, Math.min(1, available / capacity));
     const remaining = Math.max(0, capacity - available);
-    const fullInSeconds = extraction.ratePerHour > 0 ? remaining / extraction.ratePerHour * 3600 : 0;
+    const fullInSeconds = ratePerHour > 0 ? remaining / ratePerHour * 3600 : 0;
     return { available, capacity, fill, fullInSeconds };
   }, [extraction, now]);
 
@@ -144,7 +161,7 @@ export function StrategicCellSummary({
   const subtitle = cell.building
     ? `${cell.building.name ?? cell.building.code ?? 'Объект'} · LV ${cell.building.level ?? 1}`
     : primaryDeposit
-      ? `${primaryDeposit.resource.name} · плотность ${Math.round(primaryDeposit.estimates.density.value * 100)}%`
+      ? `${primaryDeposit.resource.name} · плотность ${Math.round(finiteNumber(primaryDeposit.estimates.density.value) * 100)}%`
       : rival
         ? (cell.claim?.ownerName ?? 'Чужая компания')
         : `H3 ${cell.h3Index.slice(-8)}`;
@@ -282,10 +299,19 @@ export function StrategicCellSummary({
 
       <View style={styles.actions}>
         <QuickAction {...primaryAction} />
+        {!rival && primaryAction.onPress !== onScan ? (
+          <QuickAction
+            source={gameAssets.actions.research}
+            label={scanning ? `РАЗВЕДКА · ${formatClock(scanElapsed)}` : 'РАЗВЕДКА'}
+            busy={scanning}
+            disabled={scanning || busy}
+            onPress={onScan}
+          />
+        ) : null}
         {primaryAction.onPress !== onExpand ? (
           <QuickAction
             source={gameAssets.utility.list}
-            label="ПОДРОБНЕЕ"
+            label="ДЕТАЛИ"
             disabled={false}
             onPress={onExpand}
           />
@@ -296,13 +322,14 @@ export function StrategicCellSummary({
 }
 
 function ProgressBar({ progress, tone }: { progress: number; tone: 'green' | 'amber' }) {
+  const safeProgress = Math.max(0, Math.min(1, finiteNumber(progress)));
   return (
     <View style={styles.progressTrack}>
       <View
         style={[
           styles.progressFill,
           tone === 'amber' ? styles.progressAmber : styles.progressGreen,
-          { width: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%` },
+          { width: `${Math.round(safeProgress * 100)}%` },
         ]}
       />
     </View>
@@ -376,14 +403,14 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', borderRadius: 4 },
   progressGreen: { backgroundColor: '#35df9e' },
   progressAmber: { backgroundColor: '#f4bd42' },
-  actions: { flexDirection: 'row', gap: 5, marginTop: 5 },
+  actions: { flexDirection: 'row', gap: 4, marginTop: 5 },
   action: {
     flex: 1,
     height: 34,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 3,
+    gap: 2,
     borderRadius: 9,
     backgroundColor: 'rgba(18,82,104,0.35)',
     borderWidth: 1,
@@ -391,8 +418,8 @@ const styles = StyleSheet.create({
   },
   actionGreen: { backgroundColor: 'rgba(20,104,72,0.32)', borderColor: 'rgba(53,223,158,0.4)' },
   actionAmber: { backgroundColor: 'rgba(118,79,16,0.34)', borderColor: 'rgba(244,189,66,0.45)' },
-  actionIcon: { width: 24, height: 24 },
-  actionText: { color: '#e9f7fa', fontSize: 6.7, fontWeight: '900', letterSpacing: 0.25 },
+  actionIcon: { width: 21, height: 21 },
+  actionText: { color: '#e9f7fa', fontSize: 6.1, fontWeight: '900', letterSpacing: 0.18 },
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.73, transform: [{ scale: 0.985 }] },
 });
