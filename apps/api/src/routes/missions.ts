@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import type { PoolClient, Pool } from 'pg';
 import { z } from 'zod';
 import { db } from '../db.js';
+import { finalizeMatureTechnologyResearch } from '../game/technology-service.js';
 
 const paramsSchema = z.object({ playerId: z.string().uuid() });
 const claimSchema = z.object({ missionCode: z.string().min(1).max(64) });
 
-type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
+type Queryable = { query: (...args: any[]) => Promise<any> };
 
 type MissionProgress = {
   knownDeposits: number;
@@ -56,8 +56,8 @@ const MISSIONS: readonly MissionDefinition[] = [
   },
   {
     code: 'first_technology',
-    title: 'Запустите исследование технологии',
-    body: 'Исследуйте первый уровень производственной, экономической или логистической технологии.',
+    title: 'Исследуйте первую технологию',
+    body: 'Запустите исследование производственной, экономической или логистической технологии и дождитесь его завершения.',
     rewardSoft: 12_500,
     complete: (p) => p.technologyLevels >= 1,
   },
@@ -83,14 +83,7 @@ export async function ensureMissionSchema(): Promise<void> {
 }
 
 async function loadProgress(queryable: Queryable, playerId: string): Promise<MissionProgress> {
-  const result = await queryable.query<{
-    known_deposits: string;
-    territories: string;
-    buildings: string;
-    extractions: string;
-    technology_levels: string;
-    sales: string;
-  }>(
+  const result = await queryable.query(
     `
       SELECT
         (SELECT count(*)::text FROM player_deposit_knowledge WHERE player_id = $1) AS known_deposits,
@@ -102,7 +95,14 @@ async function loadProgress(queryable: Queryable, playerId: string): Promise<Mis
     `,
     [playerId],
   );
-  const row = result.rows[0];
+  const row = result.rows[0] as {
+    known_deposits?: string;
+    territories?: string;
+    buildings?: string;
+    extractions?: string;
+    technology_levels?: string;
+    sales?: string;
+  } | undefined;
   return {
     knownDeposits: Number(row?.known_deposits ?? 0),
     territories: Number(row?.territories ?? 0),
@@ -114,11 +114,11 @@ async function loadProgress(queryable: Queryable, playerId: string): Promise<Mis
 }
 
 async function loadClaimed(queryable: Queryable, playerId: string): Promise<Set<string>> {
-  const result = await queryable.query<{ mission_code: string }>(
+  const result = await queryable.query(
     `SELECT mission_code FROM player_mission_rewards WHERE player_id = $1`,
     [playerId],
   );
-  return new Set(result.rows.map((row) => row.mission_code));
+  return new Set((result.rows as Array<{ mission_code: string }>).map((row) => row.mission_code));
 }
 
 function missionState(progress: MissionProgress, claimed: Set<string>) {
@@ -150,6 +150,7 @@ export async function missionRoutes(app: FastifyInstance): Promise<void> {
     const parsed = paramsSchema.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_player_id' });
     const playerId = parsed.data.playerId;
+    await finalizeMatureTechnologyResearch(playerId);
     const [progress, claimed, walletResult] = await Promise.all([
       loadProgress(db, playerId),
       loadClaimed(db, playerId),
@@ -171,6 +172,7 @@ export async function missionRoutes(app: FastifyInstance): Promise<void> {
     const { playerId } = parsedParams.data;
     const mission = MISSIONS.find((item) => item.code === parsedBody.data.missionCode);
     if (!mission) return reply.code(404).send({ error: 'mission_not_found' });
+    await finalizeMatureTechnologyResearch(playerId);
 
     const client = await db.connect();
     try {
