@@ -209,7 +209,7 @@ export async function runGeologyScan(input: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
-  return { ...result, deposits: compactGeologyDeposits(result.deposits, 4) };
+  return { ...result, deposits: compactGeologyDeposits(result.deposits, 3) };
 }
 
 export async function claimTerritory(input: {
