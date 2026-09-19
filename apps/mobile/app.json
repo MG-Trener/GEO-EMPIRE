@@ -30,7 +30,7 @@
     ],
     "android": {
       "package": "kz.geoempire.game",
-      "versionCode": 20,
+      "versionCode": 21,
       "backgroundColor": "#071018",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/sheet_ru_2/sheet_ru_2_element_028.png",
