@@ -68,8 +68,15 @@ export const gameAssets = {
     copper: require('../assets/images/resources/copper-ore.png'),
     iron: require('../assets/images/resources/iron-ore.png'),
     coal: require('../assets/images/resources/coal.png'),
+    silver: require('../assets/images/sheet_ru_1/sheet_ru_1_element_018.png'),
+    limestone: require('../assets/images/sheet_ru_1/sheet_ru_1_element_019.png'),
+    sand: require('../assets/images/sheet_ru_1/sheet_ru_1_element_020.png'),
+    clay: require('../assets/images/sheet_ru_1/sheet_ru_1_element_021.png'),
+    timber: require('../assets/images/sheet_ru_1/sheet_ru_1_element_022.png'),
+    wheat: require('../assets/images/sheet_ru_1/sheet_ru_1_element_023.png'),
     uranium: require('../assets/images/sheet_ru_1/sheet_ru_1_element_024.png'),
-    rareEarths: require('../assets/images/sheet_ru_1/sheet_ru_1_element_025.png'),
+    lithium: require('../assets/images/sheet_ru_1/sheet_ru_1_element_025.png'),
+    rareEarths: require('../assets/images/sheet_ru_1/sheet_ru_1_element_026.png'),
     strategic: require('../assets/images/sheet_ru_1/sheet_ru_1_element_026.png'),
   },
   industry: {
@@ -84,17 +91,87 @@ export const gameAssets = {
   },
 } as const;
 
-export function resourceIconForCode(code?: string | null): ImageSourcePropType {
+export type ResourceIconKey =
+  | 'resource-oil'
+  | 'resource-gas'
+  | 'resource-gold'
+  | 'resource-copper'
+  | 'resource-iron'
+  | 'resource-coal'
+  | 'resource-silver'
+  | 'resource-limestone'
+  | 'resource-sand'
+  | 'resource-clay'
+  | 'resource-timber'
+  | 'resource-wheat'
+  | 'resource-uranium'
+  | 'resource-lithium'
+  | 'resource-rare-earths';
+
+function resourcePresentation(code?: string | null): {
+  key: ResourceIconKey;
+  source: ImageSourcePropType;
+  mapScale: number;
+} {
   const normalized = String(code ?? '').toUpperCase();
-  if (normalized.includes('OIL') || normalized.includes('НЕФТ')) return gameAssets.resources.oil;
-  if (normalized.includes('GAS') || normalized.includes('ГАЗ')) return gameAssets.resources.gas;
-  if (normalized.includes('GOLD') || normalized.includes('ЗОЛОТ')) return gameAssets.resources.gold;
-  if (normalized.includes('COPPER') || normalized.includes('CU') || normalized.includes('МЕД')) return gameAssets.resources.copper;
-  if (normalized.includes('IRON') || normalized.includes('FE') || normalized.includes('ЖЕЛЕЗ')) return gameAssets.resources.iron;
-  if (normalized.includes('COAL') || normalized.includes('УГОЛ')) return gameAssets.resources.coal;
-  if (normalized.includes('URAN') || normalized.includes('УРАН')) return gameAssets.resources.uranium;
-  if (normalized.includes('RARE') || normalized.includes('REE') || normalized.includes('РЕДКОЗЕМ')) return gameAssets.resources.rareEarths;
-  return gameAssets.resources.strategic;
+  if (normalized.includes('CRUDE_OIL') || normalized === 'OIL' || normalized.includes('НЕФТ')) {
+    return { key: 'resource-oil', source: gameAssets.resources.oil, mapScale: 0.065 };
+  }
+  if (normalized.includes('NATURAL_GAS') || normalized === 'GAS' || normalized.includes('ГАЗ')) {
+    return { key: 'resource-gas', source: gameAssets.resources.gas, mapScale: 0.12 };
+  }
+  if (normalized.includes('GOLD') || normalized.includes('ЗОЛОТ')) {
+    return { key: 'resource-gold', source: gameAssets.resources.gold, mapScale: 0.065 };
+  }
+  if (normalized.includes('COPPER') || normalized === 'CU' || normalized.includes('МЕД')) {
+    return { key: 'resource-copper', source: gameAssets.resources.copper, mapScale: 0.065 };
+  }
+  if (normalized.includes('IRON') || normalized === 'FE' || normalized.includes('ЖЕЛЕЗ')) {
+    return { key: 'resource-iron', source: gameAssets.resources.iron, mapScale: 0.065 };
+  }
+  if (normalized.includes('COAL') || normalized.includes('УГОЛ')) {
+    return { key: 'resource-coal', source: gameAssets.resources.coal, mapScale: 0.065 };
+  }
+  if (normalized.includes('SILVER') || normalized.includes('СЕРЕБ')) {
+    return { key: 'resource-silver', source: gameAssets.resources.silver, mapScale: 0.3 };
+  }
+  if (normalized.includes('LIMESTONE') || normalized.includes('ИЗВЕСТ')) {
+    return { key: 'resource-limestone', source: gameAssets.resources.limestone, mapScale: 0.3 };
+  }
+  if (normalized === 'SAND' || normalized.includes('ПЕС')) {
+    return { key: 'resource-sand', source: gameAssets.resources.sand, mapScale: 0.3 };
+  }
+  if (normalized === 'CLAY' || normalized.includes('ГЛИН')) {
+    return { key: 'resource-clay', source: gameAssets.resources.clay, mapScale: 0.3 };
+  }
+  if (normalized.includes('TIMBER') || normalized.includes('WOOD') || normalized.includes('ДРЕВЕС')) {
+    return { key: 'resource-timber', source: gameAssets.resources.timber, mapScale: 0.3 };
+  }
+  if (normalized.includes('WHEAT') || normalized.includes('ПШЕН')) {
+    return { key: 'resource-wheat', source: gameAssets.resources.wheat, mapScale: 0.3 };
+  }
+  if (normalized.includes('URAN') || normalized.includes('УРАН')) {
+    return { key: 'resource-uranium', source: gameAssets.resources.uranium, mapScale: 0.3 };
+  }
+  if (normalized.includes('LITH') || normalized.includes('ЛИТ')) {
+    return { key: 'resource-lithium', source: gameAssets.resources.lithium, mapScale: 0.3 };
+  }
+  if (normalized.includes('RARE') || normalized.includes('REE') || normalized.includes('РЕДКОЗЕМ')) {
+    return { key: 'resource-rare-earths', source: gameAssets.resources.rareEarths, mapScale: 0.3 };
+  }
+  return { key: 'resource-rare-earths', source: gameAssets.resources.strategic, mapScale: 0.3 };
+}
+
+export function resourceIconForCode(code?: string | null): ImageSourcePropType {
+  return resourcePresentation(code).source;
+}
+
+export function resourceIconKeyForCode(code?: string | null): ResourceIconKey {
+  return resourcePresentation(code).key;
+}
+
+export function resourceMapScaleForCode(code?: string | null): number {
+  return resourcePresentation(code).mapScale;
 }
 
 export function industrialIconForBuilding(code?: string | null, status?: string | null): ImageSourcePropType {
