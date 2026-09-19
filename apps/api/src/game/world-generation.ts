@@ -3,9 +3,11 @@ import { db } from '../db.js';
 /**
  * Materialises visited H3 cells and deterministic geology lazily.
  *
- * Every generated point has a deterministic target of 1-3 DISTINCT resource
- * types. Existing worlds are upgraded in place: old cells keep their current
- * deposits and receive extra resource types until they reach their target.
+ * A geological point is deliberately larger than a single resolution-12 game
+ * cell. We keep at most one generated deposit per resolution-11 parent cell
+ * (roughly one deposit for seven neighbouring gameplay cells). This prevents
+ * the map around the player from turning into a carpet of overlapping deposits
+ * while keeping exploration useful at starter ranges.
  */
 export async function ensureGeneratedWorldArea(
   lat: number,
@@ -41,8 +43,9 @@ export async function ensureGeneratedWorldArea(
     [lat, lng, resolution, ring],
   );
 
-  // Guarantee one starter-visible commodity in every new cell. This keeps the
-  // first hours playable even when the additional resources are deeper/rarer.
+  // Pick one representative gameplay cell inside every resolution-11 geology
+  // zone touched by this request. If that zone already contains a deposit (for
+  // example from an older world version), do not generate another one.
   await db.query(
     `
       WITH origin AS (
@@ -53,24 +56,46 @@ export async function ensureGeneratedWorldArea(
         FROM origin
         CROSS JOIN LATERAL h3_grid_disk_distances(origin.h3, $4) AS grid
       ),
+      ranked_cells AS (
+        SELECT
+          cell,
+          h3_cell_to_parent(cell, 11) AS geology_parent,
+          row_number() OVER (
+            PARTITION BY h3_cell_to_parent(cell, 11)
+            ORDER BY hashtextextended(cell::text, 77), cell::text
+          ) AS cell_rank
+        FROM cells
+      ),
+      eligible_cells AS (
+        SELECT cell, geology_parent
+        FROM ranked_cells
+        WHERE cell_rank = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM resource_deposits existing
+            WHERE h3_cell_to_parent(existing.cell_h3, 11) = ranked_cells.geology_parent
+              AND existing.quantity_remaining > 0
+          )
+      ),
       resource_pool AS (
         SELECT
           id,
+          code,
+          rarity,
           row_number() OVER (ORDER BY id) AS rn,
           count(*) OVER () AS pool_size
         FROM resources
         WHERE active = true
-          AND rarity <= 2
-          AND category IN ('ore', 'fuel', 'construction')
+          AND category IN ('ore', 'fuel', 'construction', 'rare')
       ),
       seeded AS (
         SELECT
-          cell,
-          (hashtextextended(cell::text, 101) & 9223372036854775807::bigint) AS seed
-        FROM cells
+          eligible_cells.cell,
+          (hashtextextended(eligible_cells.geology_parent::text, 101) & 9223372036854775807::bigint) AS seed
+        FROM eligible_cells
       ),
       chosen AS (
-        SELECT seeded.cell, seeded.seed, resource_pool.id AS resource_id
+        SELECT seeded.cell, seeded.seed, resource_pool.id AS resource_id, resource_pool.rarity
         FROM seeded
         JOIN resource_pool
           ON resource_pool.rn = 1 + (seeded.seed % resource_pool.pool_size::bigint)
@@ -89,101 +114,25 @@ export async function ensureGeneratedWorldArea(
       SELECT
         chosen.cell,
         chosen.resource_id,
-        (chosen.seed % 18)::numeric,
-        ((chosen.seed % 18) + 24 + ((chosen.seed / 97) % 28))::numeric,
-        (75000 + (chosen.seed % 1925000))::numeric,
-        (75000 + (chosen.seed % 1925000))::numeric,
-        (0.20 + ((chosen.seed % 760)::numeric / 1000)),
-        (45 + ((chosen.seed % 5000)::numeric / 100)),
+        CASE
+          WHEN chosen.rarity <= 2 THEN (chosen.seed % 24)::numeric
+          ELSE (25 + (chosen.seed % 390))::numeric
+        END,
+        CASE
+          WHEN chosen.rarity <= 2 THEN ((chosen.seed % 24) + 28 + ((chosen.seed / 97) % 42))::numeric
+          ELSE (80 + (chosen.seed % 390) + ((chosen.seed / 113) % 520))::numeric
+        END,
+        CASE
+          WHEN chosen.rarity <= 2 THEN (100000 + (chosen.seed % 1900000))::numeric
+          ELSE (40000 + (chosen.seed % 3200000))::numeric
+        END,
+        CASE
+          WHEN chosen.rarity <= 2 THEN (100000 + (chosen.seed % 1900000))::numeric
+          ELSE (40000 + (chosen.seed % 3200000))::numeric
+        END,
+        (0.10 + ((chosen.seed % 820)::numeric / 1000)),
+        (38 + ((chosen.seed % 5800)::numeric / 100)),
         chosen.seed
-      FROM chosen
-      WHERE NOT EXISTS (
-        SELECT 1 FROM resource_deposits existing WHERE existing.cell_h3 = chosen.cell
-      )
-      ON CONFLICT (cell_h3, resource_id, depth_from_m, depth_to_m) DO NOTHING
-    `,
-    [lat, lng, resolution, ring],
-  );
-
-  // Fill each cell to its deterministic target of 1-3 distinct commodities.
-  // The candidate order is deterministic per H3 cell, so revisiting the same
-  // place never rerolls geology.
-  await db.query(
-    `
-      WITH origin AS (
-        SELECT h3_lat_lng_to_cell(point($1, $2), $3) AS h3
-      ),
-      cells AS (
-        SELECT grid.index AS cell
-        FROM origin
-        CROSS JOIN LATERAL h3_grid_disk_distances(origin.h3, $4) AS grid
-      ),
-      seeded AS (
-        SELECT
-          cell,
-          (hashtextextended(cell::text, 303) & 9223372036854775807::bigint) AS seed,
-          1 + ((hashtextextended(cell::text, 404) & 9223372036854775807::bigint) % 3)::int AS target_count
-        FROM cells
-      ),
-      existing_counts AS (
-        SELECT
-          seeded.cell,
-          seeded.seed,
-          seeded.target_count,
-          count(DISTINCT d.resource_id)::int AS existing_count
-        FROM seeded
-        LEFT JOIN resource_deposits d ON d.cell_h3 = seeded.cell
-        GROUP BY seeded.cell, seeded.seed, seeded.target_count
-      ),
-      candidates AS (
-        SELECT
-          ec.cell,
-          ec.seed,
-          ec.target_count,
-          ec.existing_count,
-          r.id AS resource_id,
-          r.rarity,
-          (hashtextextended(ec.cell::text || ':' || r.code, 505) & 9223372036854775807::bigint) AS resource_seed,
-          row_number() OVER (
-            PARTITION BY ec.cell
-            ORDER BY hashtextextended(ec.cell::text || ':' || r.code, 606), r.id
-          ) AS rn
-        FROM existing_counts ec
-        CROSS JOIN resources r
-        WHERE r.active = true
-          AND r.category IN ('ore', 'fuel', 'construction', 'rare')
-          AND NOT EXISTS (
-            SELECT 1
-            FROM resource_deposits d
-            WHERE d.cell_h3 = ec.cell AND d.resource_id = r.id
-          )
-      ),
-      chosen AS (
-        SELECT *
-        FROM candidates
-        WHERE rn <= GREATEST(0, target_count - existing_count)
-      )
-      INSERT INTO resource_deposits (
-        cell_h3,
-        resource_id,
-        depth_from_m,
-        depth_to_m,
-        quantity_initial,
-        quantity_remaining,
-        density,
-        quality,
-        generation_seed
-      )
-      SELECT
-        chosen.cell,
-        chosen.resource_id,
-        (12 + (chosen.resource_seed % 420))::numeric,
-        (55 + (chosen.resource_seed % 420) + ((chosen.resource_seed / 113) % 520))::numeric,
-        (40000 + (chosen.resource_seed % 3200000))::numeric,
-        (40000 + (chosen.resource_seed % 3200000))::numeric,
-        (0.08 + ((chosen.resource_seed % 900)::numeric / 1000)),
-        (35 + ((chosen.resource_seed % 6300)::numeric / 100)),
-        chosen.resource_seed
       FROM chosen
       ON CONFLICT (cell_h3, resource_id, depth_from_m, depth_to_m) DO NOTHING
     `,
