@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -55,13 +55,27 @@ const WORLD_RING = 6;
 const MAP_ZOOM = 17.85;
 const EARTH_RADIUS_METERS = 6_371_000;
 const CLAIM_COST = 2_500;
+const LOCATION_UPDATE_TIME_MS = 1_500;
+const LOCATION_UPDATE_DISTANCE_METERS = 5;
+const WORLD_REFRESH_DISTANCE_METERS = 30;
 
 type MainSection = 'map' | GameplaySection;
 type ScanDeposit = GeologyScanResponse['deposits'][number];
+type LatLng = { lat: number; lng: number };
 
 function ownerKind(cell: WorldCell): 'free' | 'mine' | 'rival' {
   if (!cell.claim) return 'free';
   return cell.claim.ownerId === DEMO_PLAYER_ID ? 'mine' : 'rival';
+}
+
+function distanceMeters(a: LatLng, b: LatLng): number {
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const deltaLat = (b.lat - a.lat) * Math.PI / 180;
+  const deltaLng = (b.lng - a.lng) * Math.PI / 180;
+  const haversine = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(haversine)));
 }
 
 function cellsToGeoJson(cells: WorldCell[], selectedH3?: string): FeatureCollection<Polygon> {
@@ -213,6 +227,13 @@ export default function AppFirstMiningLoop() {
   const [layersOpen, setLayersOpen] = useState(false);
   const [resourceFilterOpen, setResourceFilterOpen] = useState(false);
   const [cameraResetKey, setCameraResetKey] = useState(0);
+  const selectedCellRef = useRef<WorldCell | null>(null);
+  const lastWorldRefreshRef = useRef<LatLng | null>(null);
+  const worldRefreshInFlightRef = useRef(false);
+
+  useEffect(() => {
+    selectedCellRef.current = selectedCell;
+  }, [selectedCell]);
 
   const { settings, updateSetting, resetSettings } = useGameSettings();
   const {
@@ -251,8 +272,9 @@ export default function AppFirstMiningLoop() {
   }, []);
 
   const refreshWorld = useCallback(async (
-    next: { lat: number; lng: number },
+    next: LatLng,
     keepSelectedH3?: string,
+    refreshSideData = true,
   ) => {
     setLoadingWorld(true);
     try {
@@ -263,7 +285,10 @@ export default function AppFirstMiningLoop() {
           ? response.cells.find((cell) => cell.h3Index === keepSelectedH3) ?? response.currentCell
           : response.currentCell,
       );
-      await Promise.all([refreshInventory(), refreshCapabilities(), refreshKnownDeposits()]);
+      lastWorldRefreshRef.current = next;
+      if (refreshSideData) {
+        await Promise.all([refreshInventory(), refreshCapabilities(), refreshKnownDeposits()]);
+      }
     } catch {
       setMessage('Нет связи с игровым сервером');
     } finally {
@@ -273,32 +298,101 @@ export default function AppFirstMiningLoop() {
 
   useEffect(() => {
     let cancelled = false;
+    let subscription: Location.LocationSubscription | null = null;
+
+    const updateFromLocation = async (
+      location: Location.LocationObject,
+      forceWorldRefresh = false,
+    ) => {
+      if (cancelled) return;
+
+      const next = { lat: location.coords.latitude, lng: location.coords.longitude };
+      setPosition(next);
+
+      const lastWorldRefresh = lastWorldRefreshRef.current;
+      const shouldRefreshWorld = forceWorldRefresh
+        || !lastWorldRefresh
+        || distanceMeters(lastWorldRefresh, next) >= WORLD_REFRESH_DISTANCE_METERS;
+
+      if (!shouldRefreshWorld || worldRefreshInFlightRef.current) return;
+
+      worldRefreshInFlightRef.current = true;
+      try {
+        await refreshWorld(
+          next,
+          selectedCellRef.current?.h3Index,
+          forceWorldRefresh,
+        );
+      } finally {
+        worldRefreshInFlightRef.current = false;
+      }
+    };
 
     const start = async () => {
       const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status === 'granted') {
-        try {
-          const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          if (!cancelled) {
-            const next = { lat: current.coords.latitude, lng: current.coords.longitude };
-            setPosition(next);
-            await refreshWorld(next);
-            return;
-          }
-        } catch {
-          // Fallback below.
-        }
-      }
+      if (cancelled) return;
 
-      if (!cancelled) {
+      if (permission.status !== 'granted') {
         setPosition(ASTANA_DEMO);
         await refreshWorld(ASTANA_DEMO);
         setMessage('Геолокация недоступна - показан тестовый сектор');
+        return;
+      }
+
+      let hasRealPosition = false;
+      try {
+        const current = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+          mayShowUserSettingsDialog: true,
+        });
+        if (!cancelled) {
+          hasRealPosition = true;
+          await updateFromLocation(current, true);
+        }
+      } catch {
+        try {
+          const recent = await Location.getLastKnownPositionAsync({ maxAge: 60_000 });
+          if (recent && !cancelled) {
+            hasRealPosition = true;
+            await updateFromLocation(recent, true);
+          }
+        } catch {
+          // The live watcher below can still acquire the first valid fix.
+        }
+      }
+
+      if (!hasRealPosition && !cancelled) {
+        setPosition(ASTANA_DEMO);
+        await refreshWorld(ASTANA_DEMO);
+        setMessage('Ожидаю точную GPS-позицию...');
+      }
+
+      if (cancelled) return;
+
+      try {
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: LOCATION_UPDATE_TIME_MS,
+            distanceInterval: LOCATION_UPDATE_DISTANCE_METERS,
+            mayShowUserSettingsDialog: true,
+          },
+          (location) => {
+            void updateFromLocation(location);
+          },
+        );
+      } catch {
+        if (!cancelled) {
+          setMessage('Не удалось запустить постоянное GPS-отслеживание');
+        }
       }
     };
 
     void start();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      subscription?.remove();
+    };
   }, [refreshWorld]);
 
   useEffect(() => {
