@@ -9,7 +9,11 @@ import {
   TECHNOLOGY_KEYS,
   type TechnologyKey,
 } from '../game/technology-config.js';
-import { getPlayerTechnologyLevels } from '../game/technology-service.js';
+import {
+  finalizeMatureTechnologyResearch,
+  getActiveTechnologyResearch,
+  getPlayerTechnologyLevels,
+} from '../game/technology-service.js';
 
 const paramsSchema = z.object({ playerId: z.string().uuid() });
 const bodySchema = z.object({ techKey: z.enum(TECHNOLOGY_KEYS) });
@@ -17,7 +21,15 @@ const bodySchema = z.object({ techKey: z.enum(TECHNOLOGY_KEYS) });
 type WalletRow = { soft_currency: string; premium_currency: string };
 type LevelRow = { level: number };
 
-function technologyOptions(levels: Awaited<ReturnType<typeof getPlayerTechnologyLevels>>) {
+function researchDurationSeconds(category: 'production' | 'economy' | 'logistics', currentLevel: number): number {
+  const base = category === 'production' ? 45 : category === 'economy' ? 60 : 75;
+  return Math.round(base * (1 + Math.max(0, currentLevel) * 0.65));
+}
+
+function technologyOptions(
+  levels: Awaited<ReturnType<typeof getPlayerTechnologyLevels>>,
+  activeResearch: Awaited<ReturnType<typeof getActiveTechnologyResearch>>,
+) {
   return TECHNOLOGY_DEFINITIONS.map((definition) => {
     const currentLevel = levels[definition.key];
     const nextLevel = currentLevel >= 10 ? null : currentLevel + 1;
@@ -34,6 +46,8 @@ function technologyOptions(levels: Awaited<ReturnType<typeof getPlayerTechnology
       effectUnit: definition.effectUnit,
       currentEffect: getTechnologyEffectValue(definition, currentLevel),
       nextEffect: nextLevel === null ? null : getTechnologyEffectValue(definition, nextLevel),
+      researchSeconds: nextLevel === null ? null : researchDurationSeconds(definition.category, currentLevel),
+      researching: activeResearch?.techKey === definition.key,
     };
   });
 }
@@ -42,25 +56,28 @@ export async function technologyRoutes(app: FastifyInstance): Promise<void> {
   app.get('/:playerId/technologies', async (request, reply) => {
     const parsed = paramsSchema.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_player_id' });
+    const playerId = parsed.data.playerId;
 
-    const [levels, walletResult] = await Promise.all([
-      getPlayerTechnologyLevels(parsed.data.playerId),
+    const levels = await getPlayerTechnologyLevels(playerId);
+    const [activeResearch, walletResult] = await Promise.all([
+      getActiveTechnologyResearch(playerId),
       db.query<WalletRow>(
         `SELECT soft_currency::text, premium_currency::text FROM wallets WHERE player_id = $1`,
-        [parsed.data.playerId],
+        [playerId],
       ),
     ]);
     const wallet = walletResult.rows[0];
     if (!wallet) return reply.code(404).send({ error: 'player_not_found' });
 
     return {
-      playerId: parsed.data.playerId,
+      playerId,
       wallet: {
         soft: Number(wallet.soft_currency),
         premium: Number(wallet.premium_currency),
       },
       modifiers: getTechnologyModifiers(levels),
-      technologies: technologyOptions(levels),
+      activeResearch,
+      technologies: technologyOptions(levels, activeResearch),
     };
   });
 
@@ -73,6 +90,7 @@ export async function technologyRoutes(app: FastifyInstance): Promise<void> {
 
     const { playerId } = parsedParams.data;
     const techKey = parsedBody.data.techKey as TechnologyKey;
+    await finalizeMatureTechnologyResearch(playerId);
     const client = await db.connect();
 
     try {
@@ -86,6 +104,22 @@ export async function technologyRoutes(app: FastifyInstance): Promise<void> {
       if (!wallet) {
         await client.query('ROLLBACK');
         return reply.code(404).send({ error: 'wallet_not_found' });
+      }
+
+      const activeResult = await client.query<{ id: string; completes_at: string }>(
+        `SELECT id::text, completes_at::text
+         FROM technology_researches
+         WHERE player_id = $1 AND status = 'running'
+         LIMIT 1
+         FOR UPDATE`,
+        [playerId],
+      );
+      if (activeResult.rows[0]) {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({
+          error: 'technology_research_already_running',
+          completesAt: activeResult.rows[0].completes_at,
+        });
       }
 
       const levelResult = await client.query<LevelRow>(
@@ -105,15 +139,22 @@ export async function technologyRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(402).send({ error: 'insufficient_funds', required: cost, balance });
       }
 
+      const definition = TECHNOLOGY_DEFINITIONS.find((item) => item.key === techKey)!;
       const nextLevel = currentLevel + 1;
-      await client.query(
+      const durationSeconds = researchDurationSeconds(definition.category, currentLevel);
+      const researchResult = await client.query<{
+        id: string;
+        started_at: string;
+        completes_at: string;
+      }>(
         `
-          INSERT INTO player_technologies (player_id, tech_key, level, updated_at)
-          VALUES ($1, $2, $3, now())
-          ON CONFLICT (player_id, tech_key)
-          DO UPDATE SET level = EXCLUDED.level, updated_at = now()
+          INSERT INTO technology_researches (
+            player_id, tech_key, target_level, soft_cost, status, started_at, completes_at
+          )
+          VALUES ($1, $2, $3, $4, 'running', now(), now() + ($5 * interval '1 second'))
+          RETURNING id::text, started_at::text, completes_at::text
         `,
-        [playerId, techKey, nextLevel],
+        [playerId, techKey, nextLevel, cost, durationSeconds],
       );
       await client.query(
         `UPDATE wallets SET soft_currency = soft_currency - $2, updated_at = now() WHERE player_id = $1`,
@@ -124,32 +165,38 @@ export async function technologyRoutes(app: FastifyInstance): Promise<void> {
           INSERT INTO wallet_transactions (
             player_id, soft_delta, premium_delta, reason, reference_type, reference_id
           )
-          VALUES ($1, $2, 0, 'technology_upgrade', 'technology', $3)
+          VALUES ($1, $2, 0, 'technology_research', 'technology', $3)
         `,
-        [playerId, -cost, techKey],
+        [playerId, -cost, `${techKey}:${nextLevel}`],
       );
 
       await client.query('COMMIT');
+      const research = researchResult.rows[0];
       const levels = await getPlayerTechnologyLevels(playerId);
-      const definition = TECHNOLOGY_DEFINITIONS.find((item) => item.key === techKey)!;
       return {
-        status: 'upgraded',
+        status: 'researching',
         playerId,
         techKey,
-        level: nextLevel,
+        targetLevel: nextLevel,
         charged: cost,
         wallet: { soft: balance - cost, premium: Number(wallet.premium_currency) },
+        research: {
+          id: research.id,
+          startedAt: research.started_at,
+          completesAt: research.completes_at,
+          durationSeconds,
+        },
         effect: {
           label: definition.effect,
           unit: definition.effectUnit,
-          value: getTechnologyEffectValue(definition, nextLevel),
+          valueAfterCompletion: getTechnologyEffectValue(definition, nextLevel),
         },
         modifiers: getTechnologyModifiers(levels),
       };
     } catch (error) {
       await client.query('ROLLBACK');
       request.log.error(error);
-      return reply.code(500).send({ error: 'technology_upgrade_failed' });
+      return reply.code(500).send({ error: 'technology_research_start_failed' });
     } finally {
       client.release();
     }
