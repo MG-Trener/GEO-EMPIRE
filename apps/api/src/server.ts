@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { closeDatabase, db } from './db.js';
+import { ensureGeologyResearchSchema } from './game/geology-research-service.js';
 import { ensureTechnologySchema } from './game/technology-service.js';
 import { buildingRoutes } from './routes/buildings.js';
 import { developmentProjectRoutes } from './routes/development-projects.js';
@@ -8,6 +9,7 @@ import { geologyRoutes } from './routes/geology.js';
 import { geologyScanRoutes } from './routes/geology-scan.js';
 import { geologyInvestigationRoutes } from './routes/geology-investigations.js';
 import { geologyKnownDepositRoutes } from './routes/geology-known-deposits.js';
+import { geologyResearchRoutes } from './routes/geology-research.js';
 import { marketRoutesV2 } from './routes/market-v2.js';
 import { ensureMissionSchema, missionRoutes } from './routes/missions.js';
 import { onboardingRoutes } from './routes/onboarding.js';
@@ -20,6 +22,7 @@ import { worldRoutes } from './routes/world.js';
 const app = Fastify({ logger: true });
 
 await ensureTechnologySchema();
+await ensureGeologyResearchSchema();
 await ensureMissionSchema();
 
 const requiredTables = [
@@ -29,6 +32,7 @@ const requiredTables = [
   'player_geology_skills',
   'player_technologies',
   'technology_researches',
+  'geology_researches',
   'player_mission_rewards',
   'world_cells',
   'resources',
@@ -111,6 +115,7 @@ await app.register(geologyRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyScanRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyInvestigationRoutes, { prefix: '/api/v1/geology' });
 await app.register(geologyKnownDepositRoutes, { prefix: '/api/v1/geology' });
+await app.register(geologyResearchRoutes, { prefix: '/api/v1/research' });
 await app.register(developmentProjectRoutes, { prefix: '/api/v1/development' });
 await app.register(territoryRoutesV2, { prefix: '/api/v1/territories' });
 await app.register(buildingRoutes, { prefix: '/api/v1/buildings' });
