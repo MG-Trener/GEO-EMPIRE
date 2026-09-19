@@ -3,7 +3,7 @@
     "name": "GEO EMPIRE",
     "slug": "geo-empire",
     "scheme": "geoempire",
-    "version": "0.2.9",
+    "version": "0.2.10",
     "userInterfaceStyle": "dark",
     "orientation": "portrait",
     "newArchEnabled": true,
@@ -30,7 +30,7 @@
     ],
     "android": {
       "package": "kz.geoempire.game",
-      "versionCode": 13,
+      "versionCode": 14,
       "backgroundColor": "#071018",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/sheet_ru_2/sheet_ru_2_element_028.png",
