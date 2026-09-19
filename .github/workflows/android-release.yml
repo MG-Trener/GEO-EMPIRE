@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      EXPO_PUBLIC_API_URL: https://geo-empire-api-current-production.up.railway.app
+      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
       EXPO_PUBLIC_DEMO_PLAYER_ID: 11111111-1111-4111-8111-111111111111
 
     steps:
@@ -23,6 +23,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Validate backend URL
+        shell: bash
+        run: |
+          if [ -z "$EXPO_PUBLIC_API_URL" ]; then
+            echo "::error::Set repository variable EXPO_PUBLIC_API_URL to the public Render backend URL before publishing an Android release."
+            exit 1
+          fi
+          case "$EXPO_PUBLIC_API_URL" in
+            https://*) ;;
+            *)
+              echo "::error::EXPO_PUBLIC_API_URL must be a public HTTPS URL."
+              exit 1
+              ;;
+          esac
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

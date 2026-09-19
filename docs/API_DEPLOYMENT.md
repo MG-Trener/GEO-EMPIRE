@@ -1,66 +1,121 @@
-# GEO EMPIRE API deployment
+# GEO EMPIRE API deployment: Render + Neon
 
-The backend is packaged as a standalone Docker image and can be deployed to any container host that can reach the Neon PostgreSQL database.
+The production architecture is:
 
-## Required environment
+```text
+GitHub
+  |
+  +-- apps/mobile  -> React Native / Android
+  |
+  +-- apps/api     -> Render Web Service (Free)
+                         |
+                         v
+                    Neon PostgreSQL (Free)
+```
+
+The mobile application never connects to PostgreSQL directly. It calls the public HTTPS backend on Render, and only the backend receives the Neon `DATABASE_URL` secret.
+
+## Repository layout
+
+- `apps/mobile` - React Native / Expo Android client
+- `apps/api` - Fastify API
+- `database/migrations` - PostgreSQL schema migrations
+- `render.yaml` - Render Blueprint for the API
+
+## 1. Prepare Neon
+
+Use the existing GEO EMPIRE Neon PostgreSQL database. Do not create an additional Render database.
+
+Before exposing the API, apply SQL files from `database/migrations` to the target Neon branch in numeric order. Development/demo seed data in `database/seeds` is optional and should not be applied to a production world unless explicitly desired.
+
+The API expects the `postgis` and `h3` extensions plus the current application tables. `GET /ready` reports missing objects.
+
+Copy the Neon PostgreSQL connection string for the target database. Keep it private.
+
+## 2. Create the Render service
+
+The repository contains `render.yaml`. In Render, create a new Blueprint from the `MG-Trener/GEO-EMPIRE` repository and deploy the `geo-empire-api` service.
+
+When Render asks for environment values, set:
 
 ```env
 DATABASE_URL=postgresql://...
-PORT=4000
-HOST=0.0.0.0
 ```
 
-`DATABASE_URL` must be stored in the hosting provider's secret/environment settings. Never commit the real Neon connection string.
+`DATABASE_URL` is declared with `sync: false`, so the real value is entered in Render and is never stored in GitHub.
 
-## Local container test
+The Blueprint configures:
 
-From the repository root:
+- runtime: Node.js
+- plan: Free
+- build: `npm ci --include=dev && npm run build:api`
+- start: `npm --workspace @geo-empire/api run start`
+- host: `0.0.0.0`
+- health check: `/health`
+- automatic deploys from `main`
+
+Do not hard-code Render's `PORT`. Render supplies it at runtime and the API already reads `process.env.PORT`.
+
+## 3. Verify backend and database
+
+After deployment, open the generated HTTPS service URL and verify:
+
+```text
+GET https://<render-service>.onrender.com/health
+GET https://<render-service>.onrender.com/ready
+```
+
+Expected results:
+
+- `/health` -> `status: ok`, proving the API can connect to Neon.
+- `/ready` -> `status: ready`, proving required tables and extensions are present.
+
+If `/health` works but `/ready` returns HTTP 503, inspect `missingTables` and `missingExtensions` and finish the Neon migrations/extensions before using that database as the game backend.
+
+## 4. Connect Android builds to Render
+
+The mobile client reads its API address from `EXPO_PUBLIC_API_URL` at build time.
+
+After Render gives the service its public HTTPS URL, create this GitHub repository variable:
+
+```text
+EXPO_PUBLIC_API_URL=https://<render-service>.onrender.com
+```
+
+Do not add a trailing slash.
+
+Both Android workflows use this repository variable. The manual `Android APK` workflow can still temporarily override it with the `api_url` input. A build fails early if no public HTTPS backend URL is configured, preventing an APK from accidentally shipping with a localhost or obsolete Railway address.
+
+## 5. Local development
+
+For local API development:
+
+```env
+DATABASE_URL=postgresql://...
+HOST=0.0.0.0
+PORT=4000
+```
+
+Run:
 
 ```bash
-docker build -f apps/api/Dockerfile -t geo-empire-api .
-docker run --rm -p 4000:4000 -e DATABASE_URL="$DATABASE_URL" geo-empire-api
+npm run dev:api
 ```
 
-Then verify connectivity:
+For an Android emulator:
 
-```text
-GET http://localhost:4000/health
+```env
+EXPO_PUBLIC_API_URL=http://10.0.2.2:4000
 ```
 
-And verify that the database schema is ready for the current application:
+For a physical device on the same LAN, use the development computer's LAN address, for example:
 
-```text
-GET http://localhost:4000/ready
+```env
+EXPO_PUBLIC_API_URL=http://192.168.1.100:4000
 ```
 
-`/health` checks that the API can reach PostgreSQL. `/ready` additionally checks required tables plus the `postgis` and `h3` extensions. It returns HTTP 503 and lists missing objects when migrations are incomplete.
+## 6. Render Free limitation
 
-## Production host
+Render Free is suitable for development and early testing. A free web service can spin down after a period without incoming requests, so the first API call after inactivity can be noticeably slower while the service starts again.
 
-Create one web/container service with:
-
-- build context: repository root
-- Dockerfile: `apps/api/Dockerfile`
-- public port: `4000` or the provider-assigned `PORT`
-- health/readiness check path: `/ready`
-- secret: `DATABASE_URL`
-
-The service should expose an HTTPS URL such as `https://api.example.com`.
-
-## Connect Android APK
-
-The mobile app reads its backend URL from `EXPO_PUBLIC_API_URL` at build time.
-
-The GitHub Actions workflow `Android APK` can be started manually with the public API URL. Example input:
-
-```text
-api_url = https://api.example.com
-```
-
-The resulting APK will call that public server instead of the Android-emulator address `http://10.0.2.2:4000`.
-
-## Database preparation
-
-Before exposing the API, apply the SQL files in `database/migrations` to the target Neon branch in numeric order. Development/demo seed data in `database/seeds` is optional and should not be applied to a production world unless explicitly desired.
-
-Do not switch the production service to a database branch until `GET /ready` returns `status: ready`.
+For production gameplay with many concurrent users or latency-sensitive actions, move the same service to an always-on Render plan or another always-on host without changing the Neon database or mobile API contract.
