@@ -149,8 +149,8 @@ export function IndustrialMapLayer({
             'circle-radius': [
               'case',
               ['==', ['get', 'selected'], 1],
-              ['interpolate', ['linear'], ['zoom'], 10, 7, 12, 10, 14, 15, 16, 22, 18, 30, 20, 36],
-              ['interpolate', ['linear'], ['zoom'], 10, 5, 12, 8, 14, 12, 16, 18, 18, 24, 20, 30],
+              ['interpolate', ['linear'], ['zoom'], 10, 5, 12, 7, 14, 10, 16, 14, 18, 18, 20, 24],
+              ['interpolate', ['linear'], ['zoom'], 10, 4, 12, 6, 14, 8, 16, 11, 18, 15, 20, 20],
             ],
             'circle-color': [
               'case',
@@ -187,23 +187,13 @@ export function IndustrialMapLayer({
           layout={{
             'icon-image': ['get', 'iconKey'],
             'icon-size': [
-              'match', ['get', 'iconKey'],
-              'industry-mine', [
-                'interpolate', ['linear'], ['zoom'],
-                10, 0.022, 12, 0.032, 14, 0.046, 16, 0.063, 18, 0.082, 20, 0.105,
-              ],
-              'industry-pumpjack', [
-                'interpolate', ['linear'], ['zoom'],
-                10, 0.022, 12, 0.032, 14, 0.046, 16, 0.063, 18, 0.082, 20, 0.105,
-              ],
-              'industry-construction', [
-                'interpolate', ['linear'], ['zoom'],
-                10, 0.18, 12, 0.26, 14, 0.38, 16, 0.52, 18, 0.68, 20, 0.84,
-              ],
-              [
-                'interpolate', ['linear'], ['zoom'],
-                10, 0.18, 12, 0.26, 14, 0.38, 16, 0.52, 18, 0.68, 20, 0.84,
-              ],
+              'interpolate', ['linear'], ['zoom'],
+              10, ['match', ['get', 'iconKey'], 'industry-mine', 0.004, 'industry-pumpjack', 0.004, 0.05],
+              12, ['match', ['get', 'iconKey'], 'industry-mine', 0.006, 'industry-pumpjack', 0.006, 0.075],
+              14, ['match', ['get', 'iconKey'], 'industry-mine', 0.009, 'industry-pumpjack', 0.009, 0.11],
+              16, ['match', ['get', 'iconKey'], 'industry-mine', 0.013, 'industry-pumpjack', 0.013, 0.16],
+              18, ['match', ['get', 'iconKey'], 'industry-mine', 0.018, 'industry-pumpjack', 0.018, 0.23],
+              20, ['match', ['get', 'iconKey'], 'industry-mine', 0.026, 'industry-pumpjack', 0.026, 0.32],
             ],
             'icon-anchor': 'bottom',
             'icon-allow-overlap': true,
