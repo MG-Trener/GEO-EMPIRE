@@ -31,6 +31,25 @@ type Props = {
   onMessage?: (message: string) => void;
 };
 
+type ActiveResearch = {
+  id: string;
+  techKey: IndustrialTechnologyKey;
+  targetLevel: number;
+  softCost: number;
+  startedAt: string;
+  completesAt: string;
+};
+
+type TimedTechnologyOption = TechnologyOption & {
+  researchSeconds: number | null;
+  researching?: boolean;
+};
+
+type TimedTechnologyCatalog = Omit<TechnologyCatalog, 'technologies'> & {
+  activeResearch?: ActiveResearch | null;
+  technologies: TimedTechnologyOption[];
+};
+
 const tabs: Array<{ key: Tab; title: string; icon: ImageSourcePropType }> = [
   { key: 'geology', title: 'ГЕОЛОГИЯ', icon: gameAssets.nav.exploration },
   { key: 'production', title: 'ДОБЫЧА', icon: gameAssets.nav.development },
@@ -63,6 +82,15 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
 }
 
+function formatClock(seconds: number): string {
+  const safe = Math.max(0, Math.ceil(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const rest = safe % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+}
+
 function geologyValue(option: GeologyUpgradeOption, value: number | null): string {
   if (value === null) return 'MAX';
   if (option.skill === 'accuracy') return `±${Math.round(value * 100)}%`;
@@ -77,12 +105,23 @@ function industrialEffect(option: TechnologyOption, value: number | null): strin
   return `+${Math.round(value * 1000) / 10}%`;
 }
 
+function researchTiming(active: ActiveResearch | null | undefined, now: number) {
+  if (!active) return null;
+  const start = new Date(active.startedAt).getTime();
+  const end = new Date(active.completesAt).getTime();
+  const valid = Number.isFinite(start) && Number.isFinite(end) && end > start;
+  const remainingSeconds = valid ? Math.max(0, (end - now) / 1000) : 0;
+  const progress = valid ? Math.max(0, Math.min(1, (now - start) / (end - start))) : 0;
+  return { remainingSeconds, progress };
+}
+
 export function TechnologyTreePanel({ onMessage }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('production');
   const [geology, setGeology] = useState<GeologyUpgradeCatalog | null>(null);
-  const [industry, setIndustry] = useState<TechnologyCatalog | null>(null);
+  const [industry, setIndustry] = useState<TimedTechnologyCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -92,7 +131,7 @@ export function TechnologyTreePanel({ onMessage }: Props) {
         getTechnologyCatalog(),
       ]);
       setGeology(nextGeology);
-      setIndustry(nextIndustry);
+      setIndustry(nextIndustry as TimedTechnologyCatalog);
     } catch (error) {
       onMessage?.(`Технологии: ${error instanceof Error ? error.message : 'ошибка'}`);
     } finally {
@@ -101,6 +140,19 @@ export function TechnologyTreePanel({ onMessage }: Props) {
   }, [onMessage]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!industry?.activeResearch) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [industry?.activeResearch]);
+
+  const activeTiming = researchTiming(industry?.activeResearch, now);
+  useEffect(() => {
+    if (!industry?.activeResearch || !activeTiming || activeTiming.remainingSeconds > 0) return;
+    const timer = setTimeout(() => void refresh(), 500);
+    return () => clearTimeout(timer);
+  }, [activeTiming?.remainingSeconds, industry?.activeResearch, refresh]);
 
   const totalIndustrialLevels = useMemo(
     () => industry?.technologies.reduce((sum, item) => sum + item.currentLevel, 0) ?? 0,
@@ -127,9 +179,15 @@ export function TechnologyTreePanel({ onMessage }: Props) {
   const upgradeIndustrial = useCallback(async (techKey: IndustrialTechnologyKey) => {
     setBusy(`tech:${techKey}`);
     try {
-      const result = await upgradeTechnology({ techKey });
+      const raw = await upgradeTechnology({ techKey });
+      const result = raw as unknown as {
+        status: 'researching';
+        targetLevel: number;
+        charged: number;
+        research: { durationSeconds: number; completesAt: string };
+      };
       const title = industry?.technologies.find((item) => item.key === techKey)?.title ?? techKey;
-      onMessage?.(`${title}: LV ${result.level} · списано ${formatNumber(result.charged)} ₡`);
+      onMessage?.(`${title}: исследование LV ${result.targetLevel} запущено · ${formatClock(result.research.durationSeconds)}`);
       await refresh();
     } catch (error) {
       onMessage?.(`Технология: ${error instanceof Error ? error.message : 'ошибка'}`);
@@ -138,6 +196,10 @@ export function TechnologyTreePanel({ onMessage }: Props) {
     }
   }, [industry, onMessage, refresh]);
 
+  const activeTitle = industry?.activeResearch
+    ? industry.technologies.find((item) => item.key === industry.activeResearch?.techKey)?.title ?? industry.activeResearch.techKey
+    : null;
+
   return (
     <View style={styles.root}>
       <View style={styles.hero}>
@@ -145,7 +207,7 @@ export function TechnologyTreePanel({ onMessage }: Props) {
         <View style={styles.flex}>
           <Text style={styles.eyebrow}>НАУКА И ТЕХНОЛОГИИ</Text>
           <Text style={styles.title}>Технологическое развитие</Text>
-          <Text style={styles.description}>15 независимых направлений: георазведка, производство, экономика и логистика.</Text>
+          <Text style={styles.description}>Производственные технологии исследуются во времени. Одновременно работает один исследовательский проект.</Text>
         </View>
       </View>
 
@@ -180,9 +242,23 @@ export function TechnologyTreePanel({ onMessage }: Props) {
             </View>
             <View style={styles.wallet}>
               <Text style={styles.walletValue}>{formatNumber(industry.wallet.soft)} ₡</Text>
-              <Text style={styles.walletHint}>единый бюджет исследований</Text>
+              <Text style={styles.walletHint}>бюджет исследований</Text>
             </View>
           </View>
+
+          {industry.activeResearch && activeTiming ? (
+            <View style={styles.researchBanner}>
+              <View style={styles.researchHeader}>
+                <View style={styles.flex}>
+                  <Text style={styles.researchEyebrow}>ИССЛЕДОВАНИЕ В РАБОТЕ</Text>
+                  <Text style={styles.researchTitle}>{activeTitle} · LV {industry.activeResearch.targetLevel}</Text>
+                </View>
+                <Text style={styles.researchClock}>{formatClock(activeTiming.remainingSeconds)}</Text>
+              </View>
+              <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.round(activeTiming.progress * 100)}%` }]} /></View>
+              <Text style={styles.researchHint}>Новый уровень начнёт действовать после завершения таймера.</Text>
+            </View>
+          ) : null}
 
           {activeTab === 'geology' ? (
             <GeologyBranch catalog={geology} busy={busy} onUpgrade={upgradeGeo} />
@@ -191,6 +267,8 @@ export function TechnologyTreePanel({ onMessage }: Props) {
               catalog={industry}
               category={activeTab}
               busy={busy}
+              activeResearch={industry.activeResearch ?? null}
+              activeTiming={activeTiming}
               onUpgrade={upgradeIndustrial}
             />
           )}
@@ -232,7 +310,8 @@ function GeologyBranch({
             cost={cost}
             disabled={disabled}
             busy={isBusy}
-            buttonLabel={option.maxed ? 'ИЗУЧЕНО' : 'УЛУЧШИТЬ ГЕОЛОГИЮ'}
+            buttonLabel={option.maxed ? 'ИЗУЧЕНО' : 'УЛУЧШИТЬ ОБОРУДОВАНИЕ'}
+            subLabel={!option.maxed ? 'Применяется сразу' : undefined}
             onPress={() => onUpgrade(option.skill)}
           />
         );
@@ -245,11 +324,15 @@ function IndustrialBranch({
   catalog,
   category,
   busy,
+  activeResearch,
+  activeTiming,
   onUpgrade,
 }: {
-  catalog: TechnologyCatalog;
+  catalog: TimedTechnologyCatalog;
   category: TechnologyCategory;
   busy: string | null;
+  activeResearch: ActiveResearch | null;
+  activeTiming: { remainingSeconds: number; progress: number } | null;
   onUpgrade: (key: IndustrialTechnologyKey) => void;
 }) {
   const items = catalog.technologies.filter((item) => item.category === category);
@@ -257,7 +340,8 @@ function IndustrialBranch({
     <View style={styles.cards}>
       {items.map((option) => {
         const isBusy = busy === `tech:${option.key}`;
-        const disabled = isBusy || option.maxed || option.priceSoft === null || catalog.wallet.soft < (option.priceSoft ?? 0);
+        const isResearching = activeResearch?.techKey === option.key;
+        const disabled = isBusy || Boolean(activeResearch) || option.maxed || option.priceSoft === null || catalog.wallet.soft < (option.priceSoft ?? 0);
         return (
           <TechCard
             key={option.key}
@@ -272,7 +356,20 @@ function IndustrialBranch({
             cost={option.priceSoft}
             disabled={disabled}
             busy={isBusy}
-            buttonLabel={option.maxed ? 'ИЗУЧЕНО' : `ИССЛЕДОВАТЬ ${option.title.toUpperCase()}`}
+            researching={isResearching}
+            researchProgress={isResearching ? activeTiming?.progress ?? 0 : null}
+            buttonLabel={option.maxed
+              ? 'ИЗУЧЕНО'
+              : isResearching
+                ? `ИССЛЕДУЕТСЯ · ${formatClock(activeTiming?.remainingSeconds ?? 0)}`
+                : 'НАЧАТЬ ИССЛЕДОВАНИЕ'}
+            subLabel={!option.maxed && !isResearching && option.researchSeconds !== null
+              ? `Время: ${formatClock(option.researchSeconds)}`
+              : isResearching
+                ? `После завершения: LV ${activeResearch?.targetLevel ?? option.currentLevel + 1}`
+                : Boolean(activeResearch)
+                  ? 'Исследовательский центр занят'
+                  : undefined}
             onPress={() => onUpgrade(option.key)}
           />
         );
@@ -293,7 +390,10 @@ function TechCard({
   cost,
   disabled,
   busy,
+  researching = false,
+  researchProgress = null,
   buttonLabel,
+  subLabel,
   onPress,
 }: {
   icon: ImageSourcePropType;
@@ -307,11 +407,14 @@ function TechCard({
   cost: number | null;
   disabled: boolean;
   busy: boolean;
+  researching?: boolean;
+  researchProgress?: number | null;
   buttonLabel: string;
+  subLabel?: string;
   onPress: () => void;
 }) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, researching && styles.cardResearching]}>
       <View style={styles.cardHeader}>
         <View style={styles.iconFrame}><Image source={icon} style={styles.icon} resizeMode="contain" /></View>
         <View style={styles.flex}>
@@ -330,19 +433,24 @@ function TechCard({
         <View style={[styles.valueBox, styles.valueBoxNext]}><Text style={styles.valueLabel}>СЛЕДУЮЩИЙ</Text><Text style={styles.valueNext}>{nextValue}</Text></View>
       </View>
 
+      {researching && researchProgress !== null ? (
+        <View style={styles.cardProgressTrack}><View style={[styles.cardProgressFill, { width: `${Math.round(Math.max(0, Math.min(1, researchProgress)) * 100)}%` }]} /></View>
+      ) : null}
+
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={buttonLabel}
         disabled={disabled}
         onPress={onPress}
-        style={({ pressed }) => [styles.upgrade, maxed && styles.maxed, disabled && styles.disabled, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.upgrade, researching && styles.researchingButton, maxed && styles.maxed, disabled && styles.disabled, pressed && styles.pressed]}
       >
         {busy ? <ActivityIndicator size="small" color="#ffffff" /> : (
           <>
             <Image source={gameAssets.utility.upgrade} style={styles.upgradeIcon} resizeMode="contain" />
             <View style={styles.flex}>
               <Text style={styles.upgradeTitle}>{buttonLabel}</Text>
-              {!maxed && cost !== null ? <Text style={styles.upgradeCost}>{formatNumber(cost)} ₡</Text> : null}
+              {subLabel ? <Text style={styles.upgradeSub}>{subLabel}</Text> : null}
+              {!maxed && cost !== null && !researching ? <Text style={styles.upgradeCost}>{formatNumber(cost)} ₡</Text> : null}
             </View>
           </>
         )}
@@ -395,8 +503,17 @@ const styles = StyleSheet.create({
   wallet: { alignItems: 'flex-end' },
   walletValue: { color: '#f4c856', fontSize: 11, fontWeight: '900' },
   walletHint: { color: '#6e8591', fontSize: 6.5, marginTop: 1 },
+  researchBanner: { padding: 8, borderRadius: 11, backgroundColor: 'rgba(48,39,93,0.76)', borderWidth: 1, borderColor: 'rgba(166,111,255,0.4)' },
+  researchHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  researchEyebrow: { color: '#bb8dff', fontSize: 6.5, fontWeight: '900', letterSpacing: 0.8 },
+  researchTitle: { color: '#f1e7ff', fontSize: 10.5, fontWeight: '900', marginTop: 2 },
+  researchClock: { color: '#d9baff', fontSize: 14, fontWeight: '900' },
+  researchHint: { color: '#9b8bb5', fontSize: 7, marginTop: 4 },
+  progressTrack: { height: 5, borderRadius: 5, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.08)', marginTop: 6 },
+  progressFill: { height: '100%', borderRadius: 5, backgroundColor: '#a86df5' },
   cards: { gap: 6 },
   card: { padding: 8, borderRadius: 12, backgroundColor: 'rgba(5,19,28,0.96)', borderWidth: 1, borderColor: 'rgba(78,154,174,0.17)' },
+  cardResearching: { borderColor: 'rgba(166,111,255,0.48)', backgroundColor: 'rgba(17,20,42,0.96)' },
   cardHeader: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   iconFrame: { width: 47, height: 47, borderRadius: 10, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.035)' },
   icon: { width: 45, height: 45 },
@@ -412,10 +529,14 @@ const styles = StyleSheet.create({
   value: { color: '#c5d3d8', fontSize: 9.5, fontWeight: '900', marginTop: 1 },
   valueNext: { color: '#53e1f1', fontSize: 9.5, fontWeight: '900', marginTop: 1 },
   arrow: { color: '#5f7985', fontSize: 12, fontWeight: '900' },
+  cardProgressTrack: { height: 4, marginTop: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.07)' },
+  cardProgressFill: { height: '100%', borderRadius: 4, backgroundColor: '#a86df5' },
   upgrade: { minHeight: 38, marginTop: 6, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 9, backgroundColor: 'rgba(16,82,96,0.85)', borderWidth: 1, borderColor: 'rgba(56,216,255,0.42)' },
+  researchingButton: { backgroundColor: 'rgba(72,45,114,0.72)', borderColor: 'rgba(166,111,255,0.5)' },
   maxed: { backgroundColor: 'rgba(30,83,56,0.5)', borderColor: 'rgba(64,221,145,0.34)' },
   upgradeIcon: { width: 28, height: 28 },
   upgradeTitle: { color: '#eefbfc', fontSize: 7.5, fontWeight: '900' },
+  upgradeSub: { color: '#94a8b1', fontSize: 6.5, marginTop: 1 },
   upgradeCost: { color: '#f4c856', fontSize: 7, fontWeight: '900', marginTop: 1 },
   disabled: { opacity: 0.42 },
   pressed: { opacity: 0.73, transform: [{ scale: 0.985 }] },
