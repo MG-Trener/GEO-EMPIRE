@@ -1,1 +1,1 @@
-export { DepositInvestigationPanel } from './DepositInvestigationPanelTimed';
+export { DepositInvestigationPanel } from './DepositInvestigationPanelV2';

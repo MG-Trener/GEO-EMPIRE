@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db.js';
 import { getGeologyCapabilities } from '../game/geology-config.js';
+import { finalizeMatureGeologyResearch } from '../game/geology-research-service.js';
 
 const bodySchema = z.object({
   playerId: z.string().uuid(),
@@ -52,18 +53,18 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { playerId, playerLat, playerLng, targetLat, targetLng } = parsed.data;
+
+    // Research that reached its server deadline must affect the very next scan.
+    await finalizeMatureGeologyResearch(playerId);
+
     const skillResult = await db.query<SkillRow>(
-      `
-        SELECT range_level, coverage_level, depth_level, accuracy_level, sensitivity_level
-        FROM player_geology_skills
-        WHERE player_id = $1
-      `,
+      `SELECT range_level, coverage_level, depth_level, accuracy_level, sensitivity_level
+       FROM player_geology_skills
+       WHERE player_id = $1`,
       [playerId],
     );
     const skill = skillResult.rows[0];
-    if (!skill) {
-      return reply.code(404).send({ error: 'player_geology_not_found' });
-    }
+    if (!skill) return reply.code(404).send({ error: 'player_geology_not_found' });
 
     const capabilities = getGeologyCapabilities({
       rangeLevel: Number(skill.range_level),
@@ -74,12 +75,10 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const distanceResult = await db.query<DistanceRow>(
-      `
-        SELECT ST_Distance(
-          ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-          ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography
-        ) AS distance_m
-      `,
+      `SELECT ST_Distance(
+         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+         ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography
+       ) AS distance_m`,
       [playerLng, playerLat, targetLng, targetLat],
     );
     const distanceMeters = Number(distanceResult.rows[0]?.distance_m ?? Number.POSITIVE_INFINITY);
@@ -97,20 +96,15 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       await client.query('BEGIN');
 
       const scanResult = await client.query<ScanRow>(
-        `
-          INSERT INTO geology_scans (
-            player_id, origin, radius_m, max_depth_m, accuracy_level, sensitivity_level
-          )
-          VALUES (
-            $1,
-            ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
-            $4,
-            $5,
-            $6,
-            $7
-          )
-          RETURNING id::text
-        `,
+        `INSERT INTO geology_scans (
+           player_id, origin, radius_m, max_depth_m, accuracy_level, sensitivity_level
+         )
+         VALUES (
+           $1,
+           ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+           $4, $5, $6, $7
+         )
+         RETURNING id::text`,
         [
           playerId,
           targetLng,
@@ -123,6 +117,9 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       );
       const scanId = scanResult.rows[0].id;
 
+      // A historical cell may contain several geological horizons for the same
+      // commodity. A scan point represents RESOURCE TYPES, so keep the shallowest
+      // visible horizon of each resource and expose at most one row per resource.
       await client.query(
         `
           WITH target AS (
@@ -131,8 +128,13 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
           scanned_cells AS (
             SELECT h3_grid_disk(target.h3, $3) AS cell FROM target
           ),
-          visible AS (
-            SELECT d.*
+          ranked_visible AS (
+            SELECT
+              d.*,
+              row_number() OVER (
+                PARTITION BY d.cell_h3, d.resource_id
+                ORDER BY d.depth_from_m, d.id
+              ) AS resource_rank
             FROM scanned_cells s
             JOIN resource_deposits d ON d.cell_h3 = s.cell
             JOIN resources r ON r.id = d.resource_id
@@ -140,6 +142,9 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
               AND d.quantity_remaining > 0
               AND r.active = true
               AND r.rarity <= $5
+          ),
+          visible AS (
+            SELECT * FROM ranked_visible WHERE resource_rank = 1
           )
           INSERT INTO player_deposit_knowledge (
             player_id,
@@ -207,29 +212,45 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
           ),
           scanned_cells AS (
             SELECT h3_grid_disk(target.h3, $3) AS cell FROM target
+          ),
+          ranked AS (
+            SELECT
+              k.deposit_id::text,
+              d.cell_h3::text AS h3_index,
+              r.code AS resource_code,
+              r.name_ru AS resource_name,
+              r.rarity,
+              r.unit,
+              k.estimated_quantity_min::text,
+              k.estimated_quantity_max::text,
+              k.estimated_depth_from_m::text,
+              k.estimated_depth_to_m::text,
+              k.estimated_quality::text,
+              k.estimated_density_min::text,
+              k.estimated_density_max::text,
+              k.confidence::text,
+              row_number() OVER (
+                PARTITION BY d.cell_h3, d.resource_id
+                ORDER BY d.depth_from_m, d.id
+              ) AS resource_rank
+            FROM scanned_cells s
+            JOIN resource_deposits d ON d.cell_h3 = s.cell
+            JOIN player_deposit_knowledge k ON k.deposit_id = d.id AND k.player_id = $4
+            JOIN resources r ON r.id = d.resource_id
+            WHERE d.depth_from_m <= $5
+              AND d.quantity_remaining > 0
+              AND r.active = true
+              AND r.rarity <= $6
           )
           SELECT
-            k.deposit_id::text,
-            d.cell_h3::text AS h3_index,
-            r.code AS resource_code,
-            r.name_ru AS resource_name,
-            r.rarity,
-            r.unit,
-            k.estimated_quantity_min::text,
-            k.estimated_quantity_max::text,
-            k.estimated_depth_from_m::text,
-            k.estimated_depth_to_m::text,
-            k.estimated_quality::text,
-            k.estimated_density_min::text,
-            k.estimated_density_max::text,
-            k.confidence::text
-          FROM scanned_cells s
-          JOIN resource_deposits d ON d.cell_h3 = s.cell
-          JOIN player_deposit_knowledge k ON k.deposit_id = d.id AND k.player_id = $4
-          JOIN resources r ON r.id = d.resource_id
-          WHERE d.depth_from_m <= $5
-            AND r.rarity <= $6
-          ORDER BY r.rarity, r.code, d.depth_from_m
+            deposit_id, h3_index, resource_code, resource_name, rarity, unit,
+            estimated_quantity_min, estimated_quantity_max,
+            estimated_depth_from_m, estimated_depth_to_m,
+            estimated_quality, estimated_density_min, estimated_density_max,
+            confidence
+          FROM ranked
+          WHERE resource_rank = 1
+          ORDER BY h3_index, rarity, resource_code
         `,
         [
           targetLat,
@@ -248,7 +269,11 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
         scanId,
         playerId,
         playerPosition: { lat: playerLat, lng: playerLng },
-        target: { lat: targetLat, lng: targetLng, distanceMeters: Math.round(distanceMeters * 100) / 100 },
+        target: {
+          lat: targetLat,
+          lng: targetLng,
+          distanceMeters: Math.round(distanceMeters * 100) / 100,
+        },
         capabilities: {
           ...capabilities,
           confidence: Math.round(confidence * 10_000) / 10_000,
@@ -264,7 +289,10 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             unit: row.unit,
           },
           estimates: {
-            quantity: { min: Number(row.estimated_quantity_min), max: Number(row.estimated_quantity_max) },
+            quantity: {
+              min: Number(row.estimated_quantity_min),
+              max: Number(row.estimated_quantity_max),
+            },
             depthFromMeters: Number(row.estimated_depth_from_m),
             depthToMeters: Number(row.estimated_depth_to_m),
             quality: Number(row.estimated_quality),
