@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { DEMO_PLAYER_ID, getApiUrl, getGeologyUpgrades, upgradeGeology } from './api';
+import { compactGeologyDeposits, DEMO_PLAYER_ID, getApiUrl, getGeologyUpgrades, upgradeGeology } from './api';
 import { DepositInvestigationPanel } from './DepositInvestigationPanel';
 import { DevelopmentProjectPanel } from './DevelopmentProjectPanel';
 import { gameAssets, resourceIconForCode } from './gameAssets';
@@ -125,7 +125,7 @@ function DepositWorkspace({ mode, onMessage }: { mode: 'exploration' | 'developm
         const message = body && typeof body === 'object' && 'error' in body ? String(body.error) : `HTTP ${response.status}`;
         throw new Error(message);
       }
-      const next = (body as DepositsResponse).deposits;
+      const next = compactGeologyDeposits((body as DepositsResponse).deposits, 6);
       setDeposits(next);
       setSelectedId((current) => current && next.some((item) => item.id === current) ? current : next[0]?.id ?? null);
     } catch (error) {

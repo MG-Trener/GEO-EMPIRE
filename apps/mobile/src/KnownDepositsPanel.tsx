@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { DEMO_PLAYER_ID, getApiUrl } from './api';
+import { compactGeologyDeposits, DEMO_PLAYER_ID, getApiUrl } from './api';
 import { DepositInvestigationPanel } from './DepositInvestigationPanel';
 import { DevelopmentProjectPanel } from './DevelopmentProjectPanel';
 import { gameAssets, resourceIconForCode } from './gameAssets';
@@ -52,7 +52,7 @@ async function loadDeposits(): Promise<KnownDeposit[]> {
     const message = body && typeof body === 'object' && 'error' in body ? String(body.error) : `HTTP ${response.status}`;
     throw new Error(message);
   }
-  return (body as Response).deposits;
+  return compactGeologyDeposits((body as Response).deposits, 6);
 }
 
 export function KnownDepositsPanel({ onMessage }: { onMessage?: (message: string) => void }) {

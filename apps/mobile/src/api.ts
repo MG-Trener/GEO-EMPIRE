@@ -1,3 +1,4 @@
+import { cellToParent } from 'h3-js';
 import type {
   CollectExtractionResponse,
   ExtractionStatus,
@@ -26,6 +27,32 @@ export let DEMO_PLAYER_ID =
 
 export function setActivePlayerId(playerId: string): void {
   DEMO_PLAYER_ID = playerId;
+}
+
+const GEOLOGY_ZONE_RESOLUTION = 10;
+
+export function compactGeologyDeposits<T extends { h3Index: string }>(
+  deposits: T[],
+  limit: number,
+): T[] {
+  const seenZones = new Set<string>();
+  const compacted: T[] = [];
+
+  for (const deposit of deposits) {
+    let zone = deposit.h3Index;
+    try {
+      zone = cellToParent(deposit.h3Index, GEOLOGY_ZONE_RESOLUTION);
+    } catch {
+      // Keep malformed/legacy H3 identifiers isolated instead of crashing the UI.
+    }
+
+    if (seenZones.has(zone)) continue;
+    seenZones.add(zone);
+    compacted.push(deposit);
+    if (compacted.length >= limit) break;
+  }
+
+  return compacted;
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -129,7 +156,7 @@ export async function getKnownDeposits(playerId = DEMO_PLAYER_ID): Promise<Known
   const result = await requestJson<KnownDepositsResponse>(
     `${API_URL}/api/v1/geology/${encodeURIComponent(playerId)}/deposits`,
   );
-  return { ...result, deposits: result.deposits.slice(0, 12) };
+  return { ...result, deposits: compactGeologyDeposits(result.deposits, 6) };
 }
 
 export async function getMarket(playerId = DEMO_PLAYER_ID): Promise<MarketCatalog> {
@@ -182,7 +209,7 @@ export async function runGeologyScan(input: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
-  return { ...result, deposits: result.deposits.slice(0, 8) };
+  return { ...result, deposits: compactGeologyDeposits(result.deposits, 4) };
 }
 
 export async function claimTerritory(input: {
