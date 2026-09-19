@@ -9,6 +9,7 @@ import { geologyScanRoutes } from './routes/geology-scan.js';
 import { geologyInvestigationRoutes } from './routes/geology-investigations.js';
 import { geologyKnownDepositRoutes } from './routes/geology-known-deposits.js';
 import { marketRoutesV2 } from './routes/market-v2.js';
+import { ensureMissionSchema, missionRoutes } from './routes/missions.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { playerRoutes } from './routes/players.js';
 import { storeRoutes } from './routes/store.js';
@@ -19,6 +20,7 @@ import { worldRoutes } from './routes/world.js';
 const app = Fastify({ logger: true });
 
 await ensureTechnologySchema();
+await ensureMissionSchema();
 
 const requiredTables = [
   'players',
@@ -26,6 +28,8 @@ const requiredTables = [
   'wallet_transactions',
   'player_geology_skills',
   'player_technologies',
+  'technology_researches',
+  'player_mission_rewards',
   'world_cells',
   'resources',
   'resource_deposits',
@@ -115,6 +119,7 @@ await app.register(marketRoutesV2, { prefix: '/api/v1/market' });
 await app.register(storeRoutes, { prefix: '/api/v1/store' });
 await app.register(onboardingRoutes, { prefix: '/api/v1/onboarding' });
 await app.register(technologyRoutes, { prefix: '/api/v1/players' });
+await app.register(missionRoutes, { prefix: '/api/v1/players' });
 await app.register(playerRoutes, { prefix: '/api/v1/players' });
 
 const port = Number(process.env.PORT ?? 4000);
