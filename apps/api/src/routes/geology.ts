@@ -150,7 +150,7 @@ export async function geologyRoutes(app: FastifyInstance): Promise<void> {
             deposits.density::text,
             deposits.quality::text,
             row_number() OVER (
-              PARTITION BY h3_cell_to_parent(deposits.cell_h3, 11)
+              PARTITION BY h3_cell_to_parent(deposits.cell_h3, 10)
               ORDER BY deposits.depth_from_m, resources.rarity, deposits.id
             ) AS geology_rank
           FROM scanned_cells
@@ -178,6 +178,7 @@ export async function geologyRoutes(app: FastifyInstance): Promise<void> {
         FROM ranked
         WHERE geology_rank = 1
         ORDER BY rarity, resource_code, depth_from_m
+        LIMIT 8
       `,
       [
         targetLat,

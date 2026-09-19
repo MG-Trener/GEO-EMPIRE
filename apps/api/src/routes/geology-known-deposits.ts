@@ -108,7 +108,7 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
             active.method AS active_method,
             active.completes_at::text AS active_completes_at,
             row_number() OVER (
-              PARTITION BY h3_cell_to_parent(d.cell_h3, 11)
+              PARTITION BY h3_cell_to_parent(d.cell_h3, 10)
               ORDER BY
                 (extraction.building_id IS NOT NULL) DESC,
                 (active.method IS NOT NULL) DESC,
@@ -159,7 +159,7 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
           updated_at DESC,
           rarity DESC,
           resource_name
-        LIMIT 250
+        LIMIT 12
       `,
       [parsed.data.playerId],
     );

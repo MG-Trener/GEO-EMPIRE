@@ -118,7 +118,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       const scanId = scanResult.rows[0].id;
 
       // Older generated worlds can contain several resolution-12 deposits very
-      // close to one another. Treat all child cells of the same resolution-11
+      // close to one another. Treat all child cells of the same resolution-10
       // parent as a single geological point and expose only its best visible
       // representative. New world generation already follows the same rule.
       await client.query(
@@ -133,7 +133,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             SELECT
               d.*,
               row_number() OVER (
-                PARTITION BY h3_cell_to_parent(d.cell_h3, 11)
+                PARTITION BY h3_cell_to_parent(d.cell_h3, 10)
                 ORDER BY d.depth_from_m, r.rarity, d.id
               ) AS geology_rank
             FROM scanned_cells s
@@ -145,7 +145,11 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
               AND r.rarity <= $5
           ),
           visible AS (
-            SELECT * FROM ranked_visible WHERE geology_rank = 1
+            SELECT *
+            FROM ranked_visible
+            WHERE geology_rank = 1
+            ORDER BY depth_from_m ASC, density DESC, id
+            LIMIT 8
           )
           INSERT INTO player_deposit_knowledge (
             player_id,
@@ -231,7 +235,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
               k.estimated_density_max::text,
               k.confidence::text,
               row_number() OVER (
-                PARTITION BY h3_cell_to_parent(d.cell_h3, 11)
+                PARTITION BY h3_cell_to_parent(d.cell_h3, 10)
                 ORDER BY d.depth_from_m, r.rarity, d.id
               ) AS geology_rank
             FROM scanned_cells s
@@ -252,6 +256,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
           FROM ranked
           WHERE geology_rank = 1
           ORDER BY h3_index, rarity, resource_code
+          LIMIT 8
         `,
         [
           targetLat,

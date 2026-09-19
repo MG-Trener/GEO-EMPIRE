@@ -4,8 +4,8 @@ import { db } from '../db.js';
  * Materialises visited H3 cells and deterministic geology lazily.
  *
  * A geological point is deliberately larger than a single resolution-12 game
- * cell. We keep at most one generated deposit per resolution-11 parent cell
- * (roughly one deposit for seven neighbouring gameplay cells). This prevents
+ * cell. We keep at most one generated deposit per resolution-10 parent cell
+ * (roughly one deposit for several dozen neighbouring gameplay cells). This prevents
  * the map around the player from turning into a carpet of overlapping deposits
  * while keeping exploration useful at starter ranges.
  */
@@ -43,7 +43,7 @@ export async function ensureGeneratedWorldArea(
     [lat, lng, resolution, ring],
   );
 
-  // Pick one representative gameplay cell inside every resolution-11 geology
+  // Pick one representative gameplay cell inside every resolution-10 geology
   // zone touched by this request. If that zone already contains a deposit (for
   // example from an older world version), do not generate another one.
   await db.query(
@@ -59,9 +59,9 @@ export async function ensureGeneratedWorldArea(
       ranked_cells AS (
         SELECT
           cell,
-          h3_cell_to_parent(cell, 11) AS geology_parent,
+          h3_cell_to_parent(cell, 10) AS geology_parent,
           row_number() OVER (
-            PARTITION BY h3_cell_to_parent(cell, 11)
+            PARTITION BY h3_cell_to_parent(cell, 10)
             ORDER BY hashtextextended(cell::text, 77), cell::text
           ) AS cell_rank
         FROM cells
@@ -73,7 +73,7 @@ export async function ensureGeneratedWorldArea(
           AND NOT EXISTS (
             SELECT 1
             FROM resource_deposits existing
-            WHERE h3_cell_to_parent(existing.cell_h3, 11) = ranked_cells.geology_parent
+            WHERE h3_cell_to_parent(existing.cell_h3, 10) = ranked_cells.geology_parent
               AND existing.quantity_remaining > 0
           )
       ),

@@ -226,7 +226,7 @@ export default function AppFirstMiningLoop() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
   const [resourceFilterOpen, setResourceFilterOpen] = useState(false);
-  const [cameraResetKey, setCameraResetKey] = useState(0);
+  const cameraRef = useRef<any>(null);
   const selectedCellRef = useRef<WorldCell | null>(null);
   const lastWorldRefreshRef = useRef<LatLng | null>(null);
   const worldRefreshInFlightRef = useRef(false);
@@ -308,6 +308,8 @@ export default function AppFirstMiningLoop() {
 
       const next = { lat: location.coords.latitude, lng: location.coords.longitude };
       setPosition(next);
+      // Move only the camera center. MapLibre easeTo keeps the zoom chosen by the player.
+      cameraRef.current?.easeTo({ center: [next.lng, next.lat], duration: LOCATION_UPDATE_TIME_MS });
 
       const lastWorldRefresh = lastWorldRefreshRef.current;
       const shouldRefreshWorld = forceWorldRefresh
@@ -627,7 +629,10 @@ export default function AppFirstMiningLoop() {
       <StatusBar barStyle="light-content" translucent={false} backgroundColor="#071018" />
 
       <Map style={styles.map} mapStyle={MAP_STYLE_URL}>
-        <Camera key={`camera-${cameraResetKey}`} center={[position.lng, position.lat]} zoom={MAP_ZOOM} />
+        <Camera
+          ref={cameraRef}
+          initialViewState={{ center: [ASTANA_DEMO.lng, ASTANA_DEMO.lat], zoom: MAP_ZOOM }}
+        />
 
         {settings.showScanRange ? (
           <GeoJSONSource id="scan-range-preview" data={scanRangeGeoJson}>
@@ -845,7 +850,7 @@ export default function AppFirstMiningLoop() {
             accessibilityLabel="Вернуться к моей геопозиции"
             onPress={() => {
               playClick();
-              setCameraResetKey((value) => value + 1);
+              cameraRef.current?.easeTo({ center: [position.lng, position.lat], duration: 250 });
             }}
           />
           <MapToolButton
