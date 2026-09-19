@@ -95,6 +95,39 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
     try {
       await client.query('BEGIN');
 
+      // Scan history is intentionally not archived. Keep only the scan currently
+      // being shown to the player and drop old, unused discovery candidates.
+      // Deposits that already entered investigation/development/extraction remain
+      // known because they are active gameplay state, not scan archive.
+      await client.query('DELETE FROM geology_scans WHERE player_id = $1', [playerId]);
+      await client.query(
+        `
+          DELETE FROM player_deposit_knowledge k
+          WHERE k.player_id = $1
+            AND NOT EXISTS (
+              SELECT 1
+              FROM geology_investigations gi
+              WHERE gi.player_id = k.player_id
+                AND gi.deposit_id = k.deposit_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM development_projects dp
+              WHERE dp.player_id = k.player_id
+                AND dp.deposit_id = k.deposit_id
+                AND dp.status <> 'cancelled'
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM extraction_operations eo
+              JOIN buildings b ON b.id = eo.building_id
+              WHERE eo.deposit_id = k.deposit_id
+                AND b.owner_player_id = k.player_id
+            )
+        `,
+        [playerId],
+      );
+
       const scanResult = await client.query<ScanRow>(
         `INSERT INTO geology_scans (
            player_id, origin, radius_m, max_depth_m, accuracy_level, sensitivity_level
@@ -120,7 +153,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       // Older generated worlds can contain several resolution-12 deposits very
       // close to one another. Treat all child cells of the same resolution-10
       // parent as a single geological point and expose only its best visible
-      // representative. New world generation already follows the same rule.
+      // representative. A scan offers at most three resource candidates.
       await client.query(
         `
           WITH target AS (
@@ -149,7 +182,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             FROM ranked_visible
             WHERE geology_rank = 1
             ORDER BY depth_from_m ASC, density DESC, id
-            LIMIT 8
+            LIMIT 3
           )
           INSERT INTO player_deposit_knowledge (
             player_id,
@@ -256,7 +289,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
           FROM ranked
           WHERE geology_rank = 1
           ORDER BY h3_index, rarity, resource_code
-          LIMIT 8
+          LIMIT 3
         `,
         [
           targetLat,
