@@ -89,7 +89,10 @@ async function loadProgress(queryable: Queryable, playerId: string): Promise<Mis
         (SELECT count(*)::text FROM player_deposit_knowledge WHERE player_id = $1) AS known_deposits,
         (SELECT count(*)::text FROM territory_claims WHERE player_id = $1 AND lease_until > now()) AS territories,
         (SELECT count(*)::text FROM buildings WHERE owner_player_id = $1) AS buildings,
-        (SELECT count(*)::text FROM extraction_operations WHERE player_id = $1) AS extractions,
+        (SELECT count(*)::text
+           FROM extraction_operations e
+           JOIN buildings b ON b.id = e.building_id
+          WHERE b.owner_player_id = $1) AS extractions,
         (SELECT COALESCE(sum(level), 0)::text FROM player_technologies WHERE player_id = $1) AS technology_levels,
         (SELECT count(*)::text FROM wallet_transactions WHERE player_id = $1 AND reason = 'resource_sale') AS sales
     `,
