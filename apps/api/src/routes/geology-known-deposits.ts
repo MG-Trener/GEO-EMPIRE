@@ -82,49 +82,83 @@ export async function geologyKnownDepositRoutes(app: FastifyInstance): Promise<v
 
     const result = await db.query<KnownDepositRow>(
       `
-        SELECT
-          d.id::text AS deposit_id,
-          d.cell_h3::text AS h3_index,
-          r.code AS resource_code,
-          r.name_ru AS resource_name,
-          r.rarity,
-          r.unit,
-          k.confidence::text,
-          k.estimated_quantity_min::text,
-          k.estimated_quantity_max::text,
-          k.estimated_depth_from_m::text,
-          k.estimated_depth_to_m::text,
-          k.estimated_density_min::text,
-          k.estimated_density_max::text,
-          k.updated_at::text,
-          (
-            SELECT count(*)::text
+        WITH candidates AS (
+          SELECT
+            d.id::text AS deposit_id,
+            d.cell_h3::text AS h3_index,
+            r.code AS resource_code,
+            r.name_ru AS resource_name,
+            r.rarity,
+            r.unit,
+            k.confidence::text,
+            k.estimated_quantity_min::text,
+            k.estimated_quantity_max::text,
+            k.estimated_depth_from_m::text,
+            k.estimated_depth_to_m::text,
+            k.estimated_density_min::text,
+            k.estimated_density_max::text,
+            k.updated_at::text,
+            (
+              SELECT count(*)::text
+              FROM geology_investigations gi
+              WHERE gi.player_id = k.player_id
+                AND gi.deposit_id = k.deposit_id
+                AND gi.status = 'completed'
+            ) AS completed_studies,
+            active.method AS active_method,
+            active.completes_at::text AS active_completes_at,
+            row_number() OVER (
+              PARTITION BY h3_cell_to_parent(d.cell_h3, 11)
+              ORDER BY
+                (extraction.building_id IS NOT NULL) DESC,
+                (active.method IS NOT NULL) DESC,
+                k.confidence DESC NULLS LAST,
+                d.depth_from_m ASC,
+                k.updated_at DESC,
+                r.rarity DESC,
+                d.id
+            ) AS geology_rank
+          FROM player_deposit_knowledge k
+          JOIN resource_deposits d ON d.id = k.deposit_id
+          JOIN resources r ON r.id = d.resource_id
+          LEFT JOIN extraction_operations extraction ON extraction.deposit_id = d.id
+          LEFT JOIN LATERAL (
+            SELECT gi.method, gi.completes_at
             FROM geology_investigations gi
             WHERE gi.player_id = k.player_id
               AND gi.deposit_id = k.deposit_id
-              AND gi.status = 'completed'
-          ) AS completed_studies,
-          active.method AS active_method,
-          active.completes_at::text AS active_completes_at
-        FROM player_deposit_knowledge k
-        JOIN resource_deposits d ON d.id = k.deposit_id
-        JOIN resources r ON r.id = d.resource_id
-        LEFT JOIN LATERAL (
-          SELECT gi.method, gi.completes_at
-          FROM geology_investigations gi
-          WHERE gi.player_id = k.player_id
-            AND gi.deposit_id = k.deposit_id
-            AND gi.status = 'running'
-          ORDER BY gi.started_at DESC
-          LIMIT 1
-        ) active ON true
-        WHERE k.player_id = $1
-          AND d.quantity_remaining > 0
+              AND gi.status = 'running'
+            ORDER BY gi.started_at DESC
+            LIMIT 1
+          ) active ON true
+          WHERE k.player_id = $1
+            AND d.quantity_remaining > 0
+        )
+        SELECT
+          deposit_id,
+          h3_index,
+          resource_code,
+          resource_name,
+          rarity,
+          unit,
+          confidence,
+          estimated_quantity_min,
+          estimated_quantity_max,
+          estimated_depth_from_m,
+          estimated_depth_to_m,
+          estimated_density_min,
+          estimated_density_max,
+          updated_at,
+          completed_studies,
+          active_method,
+          active_completes_at
+        FROM candidates
+        WHERE geology_rank = 1
         ORDER BY
-          active.completes_at NULLS LAST,
-          k.updated_at DESC,
-          r.rarity DESC,
-          r.name_ru
+          active_completes_at NULLS LAST,
+          updated_at DESC,
+          rarity DESC,
+          resource_name
         LIMIT 250
       `,
       [parsed.data.playerId],
