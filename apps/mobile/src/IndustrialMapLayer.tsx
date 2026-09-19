@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GeoJSONSource, Images, Layer } from '@maplibre/maplibre-react-native';
 import type { FeatureCollection, Point } from 'geojson';
-import { gameAssets } from './gameAssets';
+import {
+  gameAssets,
+  resourceIconKeyForCode,
+  resourceMapScaleForCode,
+  type ResourceIconKey,
+} from './gameAssets';
 import type { WorldCell } from './types';
 
 type IndustrialIconKey =
   | 'industry-mine'
   | 'industry-pumpjack'
   | 'industry-construction'
-  | 'industry-facility';
+  | 'industry-facility'
+  | ResourceIconKey;
 
 function constructionStatus(status?: string | null): boolean {
   const normalized = String(status ?? '').toUpperCase();
@@ -24,8 +30,18 @@ function isUnderConstruction(cell: WorldCell, now: number): boolean {
   return completedAt > now;
 }
 
-function iconKeyForBuilding(code?: string | null, underConstruction = false): IndustrialIconKey {
+function buildingResourceCode(cell: WorldCell): string | null {
+  if (!cell.building) return null;
+  return (cell.building as { resourceCode?: string | null }).resourceCode ?? null;
+}
+
+function iconKeyForBuilding(
+  code?: string | null,
+  resourceCode?: string | null,
+  underConstruction = false,
+): IndustrialIconKey {
   if (underConstruction) return 'industry-construction';
+  if (resourceCode) return resourceIconKeyForCode(resourceCode);
 
   const normalized = String(code ?? '').toUpperCase();
   if (normalized.includes('MINE') || normalized.includes('PIT')) return 'industry-mine';
@@ -33,6 +49,20 @@ function iconKeyForBuilding(code?: string | null, underConstruction = false): In
     return 'industry-pumpjack';
   }
   return 'industry-facility';
+}
+
+function iconScaleForBuilding(
+  code?: string | null,
+  resourceCode?: string | null,
+  underConstruction = false,
+): number {
+  if (underConstruction) return 0.3;
+  if (resourceCode) return resourceMapScaleForCode(resourceCode);
+
+  const normalized = String(code ?? '').toUpperCase();
+  if (normalized.includes('MINE') || normalized.includes('PIT')) return 0.038;
+  if (normalized.includes('OIL') || normalized.includes('GAS') || normalized.includes('WELL')) return 0.045;
+  return 0.3;
 }
 
 function formatCountdown(seconds: number): string {
@@ -66,6 +96,7 @@ function industrialData(
         ? Math.max(0, (completesAt - now) / 1000)
         : 0;
       const level = Math.max(1, cell.building.level ?? 1);
+      const resourceCode = buildingResourceCode(cell);
 
       return [{
         type: 'Feature' as const,
@@ -74,7 +105,9 @@ function industrialData(
           h3Index: cell.h3Index,
           ownerKind: owned ? 'mine' : 'rival',
           selected: cell.h3Index === selectedH3 ? 1 : 0,
-          iconKey: iconKeyForBuilding(cell.building.code, underConstruction),
+          iconKey: iconKeyForBuilding(cell.building.code, resourceCode, underConstruction),
+          iconScale: iconScaleForBuilding(cell.building.code, resourceCode, underConstruction),
+          resourceCode: resourceCode ?? '',
           level,
           underConstruction: underConstruction ? 1 : 0,
           label: underConstruction ? `СТРОИТСЯ ${formatCountdown(remainingSeconds)}` : `LV ${level}`,
@@ -131,6 +164,21 @@ export function IndustrialMapLayer({
           'industry-pumpjack': gameAssets.industry.oilPumpjack,
           'industry-construction': gameAssets.industry.construction,
           'industry-facility': gameAssets.industry.facility,
+          'resource-oil': gameAssets.resources.oil,
+          'resource-gas': gameAssets.resources.gas,
+          'resource-gold': gameAssets.resources.gold,
+          'resource-copper': gameAssets.resources.copper,
+          'resource-iron': gameAssets.resources.iron,
+          'resource-coal': gameAssets.resources.coal,
+          'resource-silver': gameAssets.resources.silver,
+          'resource-limestone': gameAssets.resources.limestone,
+          'resource-sand': gameAssets.resources.sand,
+          'resource-clay': gameAssets.resources.clay,
+          'resource-timber': gameAssets.resources.timber,
+          'resource-wheat': gameAssets.resources.wheat,
+          'resource-uranium': gameAssets.resources.uranium,
+          'resource-lithium': gameAssets.resources.lithium,
+          'resource-rare-earths': gameAssets.resources.rareEarths,
         }}
       />
 
@@ -188,12 +236,12 @@ export function IndustrialMapLayer({
             'icon-image': ['get', 'iconKey'],
             'icon-size': [
               'interpolate', ['linear'], ['zoom'],
-              10, ['match', ['get', 'iconKey'], 'industry-mine', 0.010, 'industry-pumpjack', 0.010, 0.08],
-              12, ['match', ['get', 'iconKey'], 'industry-mine', 0.014, 'industry-pumpjack', 0.014, 0.11],
-              14, ['match', ['get', 'iconKey'], 'industry-mine', 0.020, 'industry-pumpjack', 0.020, 0.16],
-              16, ['match', ['get', 'iconKey'], 'industry-mine', 0.028, 'industry-pumpjack', 0.028, 0.22],
-              18, ['match', ['get', 'iconKey'], 'industry-mine', 0.038, 'industry-pumpjack', 0.038, 0.30],
-              20, ['match', ['get', 'iconKey'], 'industry-mine', 0.052, 'industry-pumpjack', 0.052, 0.40],
+              10, ['*', ['get', 'iconScale'], 0.3],
+              12, ['*', ['get', 'iconScale'], 0.42],
+              14, ['*', ['get', 'iconScale'], 0.58],
+              16, ['*', ['get', 'iconScale'], 0.76],
+              18, ['get', 'iconScale'],
+              20, ['*', ['get', 'iconScale'], 1.35],
             ],
             'icon-anchor': 'bottom',
             'icon-allow-overlap': true,
