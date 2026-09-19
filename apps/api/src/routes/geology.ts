@@ -135,29 +135,49 @@ export async function geologyRoutes(app: FastifyInstance): Promise<void> {
         scanned_cells AS (
           SELECT h3_grid_disk(target.h3, $3) AS cell
           FROM target
+        ),
+        ranked AS (
+          SELECT
+            deposits.id::text AS deposit_id,
+            deposits.cell_h3::text AS h3_index,
+            resources.code AS resource_code,
+            resources.name_ru AS resource_name,
+            resources.rarity,
+            resources.unit,
+            deposits.depth_from_m::text,
+            deposits.depth_to_m::text,
+            deposits.quantity_remaining::text,
+            deposits.density::text,
+            deposits.quality::text,
+            row_number() OVER (
+              PARTITION BY h3_cell_to_parent(deposits.cell_h3, 11)
+              ORDER BY deposits.depth_from_m, resources.rarity, deposits.id
+            ) AS geology_rank
+          FROM scanned_cells
+          JOIN resource_deposits AS deposits
+            ON deposits.cell_h3 = scanned_cells.cell
+          JOIN resources
+            ON resources.id = deposits.resource_id
+          WHERE deposits.depth_from_m <= $4
+            AND deposits.quantity_remaining > 0
+            AND resources.active = true
+            AND resources.rarity <= $5
         )
         SELECT
-          deposits.id::text AS deposit_id,
-          deposits.cell_h3::text AS h3_index,
-          resources.code AS resource_code,
-          resources.name_ru AS resource_name,
-          resources.rarity,
-          resources.unit,
-          deposits.depth_from_m::text,
-          deposits.depth_to_m::text,
-          deposits.quantity_remaining::text,
-          deposits.density::text,
-          deposits.quality::text
-        FROM scanned_cells
-        JOIN resource_deposits AS deposits
-          ON deposits.cell_h3 = scanned_cells.cell
-        JOIN resources
-          ON resources.id = deposits.resource_id
-        WHERE deposits.depth_from_m <= $4
-          AND deposits.quantity_remaining > 0
-          AND resources.active = true
-          AND resources.rarity <= $5
-        ORDER BY resources.rarity, resources.code, deposits.depth_from_m
+          deposit_id,
+          h3_index,
+          resource_code,
+          resource_name,
+          rarity,
+          unit,
+          depth_from_m,
+          depth_to_m,
+          quantity_remaining,
+          density,
+          quality
+        FROM ranked
+        WHERE geology_rank = 1
+        ORDER BY rarity, resource_code, depth_from_m
       `,
       [
         targetLat,
