@@ -126,9 +126,10 @@ export async function upgradeTechnology(input: {
 }
 
 export async function getKnownDeposits(playerId = DEMO_PLAYER_ID): Promise<KnownDepositsResponse> {
-  return requestJson<KnownDepositsResponse>(
+  const result = await requestJson<KnownDepositsResponse>(
     `${API_URL}/api/v1/geology/${encodeURIComponent(playerId)}/deposits`,
   );
+  return { ...result, deposits: result.deposits.slice(0, 12) };
 }
 
 export async function getMarket(playerId = DEMO_PLAYER_ID): Promise<MarketCatalog> {
@@ -176,11 +177,12 @@ export async function runGeologyScan(input: {
   targetLat: number;
   targetLng: number;
 }): Promise<GeologyScanResponse> {
-  return requestJson<GeologyScanResponse>(`${API_URL}/api/v1/geology/scan`, {
+  const result = await requestJson<GeologyScanResponse>(`${API_URL}/api/v1/geology/scan`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
+  return { ...result, deposits: result.deposits.slice(0, 8) };
 }
 
 export async function claimTerritory(input: {
