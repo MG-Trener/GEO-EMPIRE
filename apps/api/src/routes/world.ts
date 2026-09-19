@@ -25,6 +25,7 @@ type WorldCellRow = {
   building_status: string | null;
   building_started_at: string | null;
   building_completed_at: string | null;
+  extraction_resource_code: string | null;
 };
 
 export async function worldRoutes(app: FastifyInstance): Promise<void> {
@@ -41,8 +42,8 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
     const { lat, lng, resolution, ring } = parsed.data;
 
     // Materialise visited cells and deterministic geology before returning the
-    // map. This guarantees that every playable cell has something to discover
-    // without pre-generating the whole world in the database.
+    // map. Geology generation is sparse, so nearby gameplay cells no longer
+    // each create their own overlapping deposit.
     await ensureGeneratedWorldArea(lat, lng, resolution, ring);
 
     const result = await db.query<WorldCellRow>(
@@ -69,7 +70,8 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
           buildings.level AS building_level,
           buildings.status AS building_status,
           buildings.started_at::text AS building_started_at,
-          buildings.completed_at::text AS building_completed_at
+          buildings.completed_at::text AS building_completed_at,
+          extraction_resource.code AS extraction_resource_code
         FROM cells
         LEFT JOIN territory_claims AS claims
           ON claims.cell_h3 = cells.cell
@@ -82,6 +84,12 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
           ON buildings.id = building_cells.building_id
         LEFT JOIN building_types
           ON building_types.id = buildings.building_type_id
+        LEFT JOIN extraction_operations
+          ON extraction_operations.building_id = buildings.id
+        LEFT JOIN resource_deposits AS extraction_deposit
+          ON extraction_deposit.id = extraction_operations.deposit_id
+        LEFT JOIN resources AS extraction_resource
+          ON extraction_resource.id = extraction_deposit.resource_id
         ORDER BY cells.distance, cells.cell::text
       `,
       [lat, lng, resolution, ring],
@@ -111,6 +119,7 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
             status: row.building_status,
             startedAt: row.building_started_at,
             completedAt: row.building_completed_at,
+            resourceCode: row.extraction_resource_code,
           }
         : null,
     }));
