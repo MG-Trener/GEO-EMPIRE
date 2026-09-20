@@ -231,6 +231,8 @@ export async function claimTerritory(input: {
 
 export async function constructBuilding(input: {
   playerId: string;
+  playerLat: number;
+  playerLng: number;
   h3Index: string;
   buildingCode: string;
 }): Promise<{
@@ -238,6 +240,7 @@ export async function constructBuilding(input: {
   building: { id: string; code: string; name: string; h3Index: string; completesAt: string };
   charged: number;
   balance: number;
+  interaction?: { distanceMeters: number; maxDistanceMeters: number };
 }> {
   return requestJson(`${API_URL}/api/v1/buildings/construct`, {
     method: 'POST',

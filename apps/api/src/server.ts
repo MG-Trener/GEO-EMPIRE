@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { closeDatabase, db } from './db.js';
+import { CONSTRUCTION_INTERACTION_DISTANCE_METERS } from './game/economy-config.js';
 import { ensureGeologyResearchSchema } from './game/geology-research-service.js';
 import { ensureTechnologySchema } from './game/technology-service.js';
 import { buildingRoutes } from './routes/buildings.js';
@@ -48,6 +49,63 @@ const requiredTables = [
 ] as const;
 
 const requiredExtensions = ['postgis', 'h3'] as const;
+
+// Project approval is the point where a physical industrial object is created.
+// Enforce proximity on the server as well as in the mobile UI so a modified
+// client cannot approve remote construction outside the local build radius.
+app.addHook('preHandler', async (request, reply) => {
+  const approvalRoute = request.method === 'POST'
+    && /^\/api\/v1\/development\/projects\/[^/?]+\/approve(?:\?|$)/.test(request.url);
+  if (!approvalRoute) return;
+
+  const body = request.body as { playerLat?: unknown; playerLng?: unknown } | null;
+  const playerLat = Number(body?.playerLat);
+  const playerLng = Number(body?.playerLng);
+  if (!Number.isFinite(playerLat) || playerLat < -90 || playerLat > 90
+    || !Number.isFinite(playerLng) || playerLng < -180 || playerLng > 180) {
+    return reply.code(400).send({
+      error: 'location_required_for_construction',
+      message: 'Для начала строительства требуется актуальная геопозиция игрока',
+      maxDistanceMeters: CONSTRUCTION_INTERACTION_DISTANCE_METERS,
+    });
+  }
+
+  const projectId = String((request.params as { projectId?: unknown } | null)?.projectId ?? '');
+  if (!projectId) return;
+
+  const distanceResult = await db.query<{ distance_m: number }>(
+    `
+      SELECT ST_Distance(
+        ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+        ST_SetSRID(
+          ST_MakePoint(
+            (h3_cell_to_lat_lng(d.cell_h3))[1],
+            (h3_cell_to_lat_lng(d.cell_h3))[0]
+          ), 4326
+        )::geography
+      ) AS distance_m
+      FROM development_projects dp
+      JOIN resource_deposits d ON d.id = dp.deposit_id
+      WHERE dp.id = $3
+    `,
+    [playerLng, playerLat, projectId],
+  );
+
+  // Let the route itself return its existing 404/ownership errors when the
+  // project does not exist. The hook only owns physical-distance validation.
+  const row = distanceResult.rows[0];
+  if (!row) return;
+
+  const distanceMeters = Number(row.distance_m ?? Number.POSITIVE_INFINITY);
+  if (distanceMeters > CONSTRUCTION_INTERACTION_DISTANCE_METERS) {
+    return reply.code(403).send({
+      error: 'construction_out_of_range',
+      message: `Для строительства нужно находиться не дальше ${CONSTRUCTION_INTERACTION_DISTANCE_METERS} м от участка`,
+      distanceMeters: Math.round(distanceMeters * 100) / 100,
+      maxDistanceMeters: CONSTRUCTION_INTERACTION_DISTANCE_METERS,
+    });
+  }
+});
 
 app.get('/health', async () => {
   const result = await db.query<{ now: string; database_name: string }>(

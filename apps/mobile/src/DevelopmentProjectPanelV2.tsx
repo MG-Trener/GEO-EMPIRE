@@ -5,6 +5,8 @@ import { claimTerritory, DEMO_PLAYER_ID, getApiUrl } from './api';
 import { formatResearchClock, parseApiTimestamp } from './apiTime';
 import { gameAssets, resourceIconForCode } from './gameAssets';
 
+const BUILD_RADIUS_METERS = 75;
+
 type DevelopmentMethod = 'open_pit' | 'underground_mine' | 'oil_well' | 'gas_well';
 
 type DevelopmentOption = {
@@ -177,7 +179,7 @@ export function DevelopmentProjectPanel({ depositId, onMessage }: { depositId: s
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') throw new Error('location_permission_required');
-      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const result = await claimTerritory({
         playerId: DEMO_PLAYER_ID,
         playerLat: current.coords.latitude,
@@ -190,7 +192,7 @@ export function DevelopmentProjectPanel({ depositId, onMessage }: { depositId: s
       const reason = error instanceof Error ? error.message : 'ошибка';
       onMessage?.(
         reason === 'territory_out_of_range'
-          ? 'Для аренды нужно находиться ближе к этой геоточке. Откройте участок на карте и подойдите к нему.'
+          ? `Для аренды нужно находиться в радиусе ${BUILD_RADIUS_METERS} м от участка.`
           : reason === 'location_permission_required'
             ? 'Для аренды нужен доступ к геолокации.'
             : `Аренда участка: ${reason}`,
@@ -204,15 +206,32 @@ export function DevelopmentProjectPanel({ depositId, onMessage }: { depositId: s
     if (!data?.selectedProject) return;
     setApproving(true);
     try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') throw new Error('location_permission_required');
+      const current = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        mayShowUserSettingsDialog: true,
+      });
       const result = await requestJson<ApprovalResponse>(`${getApiUrl()}/api/v1/development/projects/${encodeURIComponent(data.selectedProject.id)}/approve`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ playerId: DEMO_PLAYER_ID }),
+        body: JSON.stringify({
+          playerId: DEMO_PLAYER_ID,
+          playerLat: current.coords.latitude,
+          playerLng: current.coords.longitude,
+        }),
       });
       onMessage?.(`Проект утверждён · списано ${money(result.charged)} · строительство запущено`);
       await refresh();
     } catch (error) {
-      onMessage?.(`Утверждение проекта: ${error instanceof Error ? error.message : 'ошибка'}`);
+      const reason = error instanceof Error ? error.message : 'ошибка';
+      onMessage?.(
+        reason === 'construction_out_of_range'
+          ? `Строительство доступно только в радиусе ${BUILD_RADIUS_METERS} м от вашей текущей геопозиции.`
+          : reason === 'location_permission_required' || reason === 'location_required_for_construction'
+            ? 'Для строительства нужен доступ к актуальной геопозиции.'
+            : `Утверждение проекта: ${reason}`,
+      );
       await refresh();
     } finally {
       setApproving(false);
@@ -301,6 +320,7 @@ export function DevelopmentProjectPanel({ depositId, onMessage }: { depositId: s
           <Check ok={landReady} text={landReady ? 'Участок арендован компанией' : parcel.status === 'free' ? 'Участок свободен — требуется аренда' : 'Участок занят другой компанией'} />
           <Check ok={data.approvalState.projectFresh} text="Расчёт проекта актуален" />
           <Check ok={data.approvalState.sufficientFunds} text={`Средства ${money(data.approvalState.walletSoft)} / CAPEX ${money(data.selectedProject.capex)}`} />
+          <Check ok={true} text={`Физическое строительство: находиться ≤ ${BUILD_RADIUS_METERS} м от участка`} />
 
           {!landReady && parcel.status === 'free' ? (
             <Pressable disabled={claiming} onPress={() => void claimParcel()} style={[styles.claimButton, claiming && styles.disabled]}>
@@ -311,7 +331,7 @@ export function DevelopmentProjectPanel({ depositId, onMessage }: { depositId: s
               {approving ? <ActivityIndicator color="#071116" /> : <Text style={styles.approveText}>УТВЕРДИТЬ И СТРОИТЬ · {money(data.selectedProject.capex)}</Text>}
             </Pressable>
           )}
-          {selectedOption ? <Text style={styles.footerHint}>Выбран проект: {selectedOption.name}. Право на ресурс и право на земельный участок — разные этапы.</Text> : null}
+          {selectedOption ? <Text style={styles.footerHint}>Выбран проект: {selectedOption.name}. Право на ресурс и право на земельный участок — разные этапы. Финальная команда строительства всегда подтверждается актуальной GPS-позицией.</Text> : null}
         </View>
       ) : null}
     </View>
@@ -323,7 +343,7 @@ function ParcelCard({ parcel, claiming, onClaim }: { parcel: ParcelState; claimi
     return (
       <View style={[styles.parcel, styles.parcelOwned]}>
         <Image source={gameAssets.utility.select} style={styles.parcelIcon} resizeMode="contain" />
-        <View style={styles.flex}><Text style={styles.parcelOwnedTitle}>УЧАСТОК АРЕНДОВАН ВАШЕЙ КОМПАНИЕЙ</Text><Text style={styles.parcelText}>Можно утверждать CAPEX и запускать строительство.</Text></View>
+        <View style={styles.flex}><Text style={styles.parcelOwnedTitle}>УЧАСТОК АРЕНДОВАН ВАШЕЙ КОМПАНИЕЙ</Text><Text style={styles.parcelText}>Можно готовить проект. Для фактического строительства нужно находиться рядом с участком.</Text></View>
       </View>
     );
   }
@@ -340,7 +360,7 @@ function ParcelCard({ parcel, claiming, onClaim }: { parcel: ParcelState; claimi
       <Image source={gameAssets.utility.marker} style={styles.parcelIcon} resizeMode="contain" />
       <View style={styles.flex}>
         <Text style={styles.parcelFreeTitle}>УЧАСТОК СВОБОДЕН — НО ЕЩЁ НЕ ВАШ</Text>
-        <Text style={styles.parcelText}>Исследование 4/4 подтверждает месторождение, но не оформляет право на землю. Для строительства участок нужно арендовать.</Text>
+        <Text style={styles.parcelText}>Исследование подтверждает месторождение, но не оформляет право на землю. Аренда доступна только когда вы физически находитесь в радиусе {BUILD_RADIUS_METERS} м.</Text>
         <Pressable disabled={claiming} onPress={onClaim} style={[styles.inlineClaim, claiming && styles.disabled]}>
           {claiming ? <ActivityIndicator size="small" color="#071116" /> : <Text style={styles.inlineClaimText}>АРЕНДОВАТЬ · {money(parcel.claimCost)}</Text>}
         </Pressable>
