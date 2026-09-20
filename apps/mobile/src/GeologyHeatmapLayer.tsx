@@ -6,6 +6,8 @@ import type { FeatureCollection, Point, Polygon } from 'geojson';
 import type { GeologyScanResponse } from './types';
 
 const EARTH_RADIUS_METERS = 6_371_000;
+const HOTSPOT_TRIGGER_METERS = 70;
+const HOTSPOT_MIN_INTENSITY = 0.62;
 export const BUILD_RADIUS_METERS = 75;
 
 type LatLng = { lat: number; lng: number };
@@ -14,6 +16,16 @@ type HeatCell = {
   intensity: number;
   distanceMeters: number;
 };
+
+function distanceMeters(a: LatLng, b: LatLng): number {
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const deltaLat = (b.lat - a.lat) * Math.PI / 180;
+  const deltaLng = (b.lng - a.lng) * Math.PI / 180;
+  const haversine = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(haversine)));
+}
 
 function circleGeoJson(
   id: string,
@@ -176,6 +188,45 @@ export function GeologyHeatmapLayer({
     }),
   }), [cellsByH3]);
 
+  const hotspotSignalData = useMemo<FeatureCollection<Point>>(() => {
+    if (!scan || !activeResource || !livePlayerPosition) {
+      return { type: 'FeatureCollection', features: [] };
+    }
+
+    let best: { intensity: number; distance: number } | null = null;
+
+    for (const cell of scan.heatmap.cells) {
+      const value = cell.values.find((item) => item.resourceCode === activeResource);
+      const intensity = Math.max(0, Math.min(1, Number(value?.intensity ?? 0)));
+      if (intensity < HOTSPOT_MIN_INTENSITY) continue;
+
+      const distance = distanceMeters(livePlayerPosition, { lat: cell.lat, lng: cell.lng });
+      if (distance > HOTSPOT_TRIGGER_METERS) continue;
+
+      if (!best || intensity > best.intensity || (intensity === best.intensity && distance < best.distance)) {
+        best = { intensity, distance };
+      }
+    }
+
+    if (!best) return { type: 'FeatureCollection', features: [] };
+
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        id: 'strong-geology-signal',
+        properties: {
+          intensity: best.intensity,
+          label: `СИЛЬНЫЙ ГЕОЛОГИЧЕСКИЙ СИГНАЛ\nПРОВЕДИТЕ РАЗВЕДКУ`,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [livePlayerPosition.lng, livePlayerPosition.lat],
+        },
+      }],
+    };
+  }, [activeResource, livePlayerPosition, scan]);
+
   const scanRadiusData = useMemo(
     () => circleGeoJson(
       'geology-scan-radius',
@@ -316,6 +367,47 @@ export function GeologyHeatmapLayer({
               </GeoJSONSource>
             </>
           ) : null}
+
+          <GeoJSONSource id="geology-hotspot-signal-source" data={hotspotSignalData}>
+            <Layer
+              id="geology-hotspot-signal-halo"
+              type="circle"
+              paint={{
+                'circle-radius': 16,
+                'circle-color': '#ffb12e',
+                'circle-opacity': 0.2,
+                'circle-blur': 0.35,
+              } as never}
+            />
+            <Layer
+              id="geology-hotspot-signal-core"
+              type="circle"
+              paint={{
+                'circle-radius': 6,
+                'circle-color': '#ffcf4d',
+                'circle-stroke-color': '#fff3bf',
+                'circle-stroke-width': 2,
+              } as never}
+            />
+            <Layer
+              id="geology-hotspot-signal-label"
+              type="symbol"
+              layout={{
+                'text-field': ['get', 'label'],
+                'text-size': 12,
+                'text-anchor': 'bottom',
+                'text-offset': [0, -1.8],
+                'text-allow-overlap': true,
+                'text-ignore-placement': true,
+              } as never}
+              paint={{
+                'text-color': '#fff2c7',
+                'text-halo-color': '#091018',
+                'text-halo-width': 2,
+                'text-halo-blur': 0.5,
+              } as never}
+            />
+          </GeoJSONSource>
 
           <GeoJSONSource id="geology-scan-center-source" data={scanCenterData}>
             <Layer
