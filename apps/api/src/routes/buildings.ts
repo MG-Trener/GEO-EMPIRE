@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db.js';
+import { CONSTRUCTION_INTERACTION_DISTANCE_METERS } from '../game/economy-config.js';
 
 const constructBodySchema = z.object({
   playerId: z.string().uuid(),
+  playerLat: z.coerce.number().min(-90).max(90),
+  playerLng: z.coerce.number().min(-180).max(180),
   h3Index: z.string().regex(/^[0-9a-f]+$/i),
   buildingCode: z.string().min(1).max(48),
 });
@@ -20,6 +23,7 @@ type BuildingTypeRow = {
 
 type WalletRow = { soft_currency: string };
 type ClaimRow = { player_id: string; owner_name: string | null };
+type DistanceRow = { distance_m: number };
 type ExistingBuildingRow = {
   building_id: string;
   owner_player_id: string;
@@ -56,7 +60,38 @@ export async function buildingRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'invalid_construction_request', details: parsed.error.flatten() });
     }
 
-    const { playerId, h3Index, buildingCode } = parsed.data;
+    const { playerId, playerLat, playerLng, h3Index, buildingCode } = parsed.data;
+
+    let distanceResult;
+    try {
+      distanceResult = await db.query<DistanceRow>(
+        `
+          SELECT ST_Distance(
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+            ST_SetSRID(
+              ST_MakePoint(
+                (h3_cell_to_lat_lng($3::h3index))[1],
+                (h3_cell_to_lat_lng($3::h3index))[0]
+              ), 4326
+            )::geography
+          ) AS distance_m
+        `,
+        [playerLng, playerLat, h3Index],
+      );
+    } catch {
+      return reply.code(400).send({ error: 'invalid_h3_index' });
+    }
+
+    const distanceMeters = Number(distanceResult.rows[0]?.distance_m ?? Number.POSITIVE_INFINITY);
+    if (distanceMeters > CONSTRUCTION_INTERACTION_DISTANCE_METERS) {
+      return reply.code(403).send({
+        error: 'construction_out_of_range',
+        message: `Для строительства нужно находиться не дальше ${CONSTRUCTION_INTERACTION_DISTANCE_METERS} м от участка`,
+        distanceMeters: Math.round(distanceMeters * 100) / 100,
+        maxDistanceMeters: CONSTRUCTION_INTERACTION_DISTANCE_METERS,
+      });
+    }
+
     const client = await db.connect();
 
     try {
@@ -220,6 +255,10 @@ export async function buildingRoutes(app: FastifyInstance): Promise<void> {
         },
         charged: cost,
         balance: balance - cost,
+        interaction: {
+          distanceMeters: Math.round(distanceMeters * 100) / 100,
+          maxDistanceMeters: CONSTRUCTION_INTERACTION_DISTANCE_METERS,
+        },
       };
     } catch (error) {
       await client.query('ROLLBACK');
