@@ -31,8 +31,7 @@ function isUnderConstruction(cell: WorldCell, now: number): boolean {
 }
 
 function buildingResourceCode(cell: WorldCell): string | null {
-  if (!cell.building) return null;
-  return (cell.building as { resourceCode?: string | null }).resourceCode ?? null;
+  return cell.building?.resourceCode ?? null;
 }
 
 function iconKeyForBuilding(
@@ -87,9 +86,13 @@ function industrialData(
     features: cells.flatMap((cell) => {
       if (!cell.building) return [];
 
-      const owned = cell.claim?.ownerId === playerId;
+      // Buildings have their own owner in the shared world. Falling back to the
+      // claim keeps compatibility with older API responses during rollout.
+      const buildingOwnerId = cell.building.ownerId ?? cell.claim?.ownerId ?? null;
+      const owned = buildingOwnerId === playerId;
       if ((owned && !showOwned) || (!owned && !showRivals)) return [];
 
+      const ownerName = cell.building.ownerName ?? cell.claim?.ownerName ?? null;
       const underConstruction = isUnderConstruction(cell, now);
       const completesAt = cell.building.completedAt ? new Date(cell.building.completedAt).getTime() : null;
       const remainingSeconds = underConstruction && completesAt
@@ -97,6 +100,11 @@ function industrialData(
         : 0;
       const level = Math.max(1, cell.building.level ?? 1);
       const resourceCode = buildingResourceCode(cell);
+      const label = underConstruction
+        ? (owned
+            ? `СТРОИТСЯ ${formatCountdown(remainingSeconds)}`
+            : `${ownerName ?? 'КОНКУРЕНТ'} · СТРОИТСЯ`)
+        : (owned ? `LV ${level}` : `${ownerName ?? 'КОНКУРЕНТ'} · LV ${level}`);
 
       return [{
         type: 'Feature' as const,
@@ -104,13 +112,15 @@ function industrialData(
         properties: {
           h3Index: cell.h3Index,
           ownerKind: owned ? 'mine' : 'rival',
+          ownerId: buildingOwnerId ?? '',
+          ownerName: ownerName ?? '',
           selected: cell.h3Index === selectedH3 ? 1 : 0,
           iconKey: iconKeyForBuilding(cell.building.code, resourceCode, underConstruction),
           iconScale: iconScaleForBuilding(cell.building.code, resourceCode, underConstruction),
           resourceCode: resourceCode ?? '',
           level,
           underConstruction: underConstruction ? 1 : 0,
-          label: underConstruction ? `СТРОИТСЯ ${formatCountdown(remainingSeconds)}` : `LV ${level}`,
+          label,
         },
         geometry: {
           type: 'Point' as const,
@@ -265,6 +275,7 @@ export function IndustrialMapLayer({
             'text-font': ['Noto Sans Bold'],
             'text-anchor': 'top',
             'text-offset': [0, 0.35],
+            'text-max-width': 14,
             'text-allow-overlap': true,
             'text-ignore-placement': true,
           } as never}
@@ -272,6 +283,7 @@ export function IndustrialMapLayer({
             'text-color': [
               'case',
               ['==', ['get', 'underConstruction'], 1], '#ffd66b',
+              ['==', ['get', 'ownerKind'], 'rival'], '#ff9fa6',
               '#f5fbfd',
             ],
             'text-halo-color': '#061018',
