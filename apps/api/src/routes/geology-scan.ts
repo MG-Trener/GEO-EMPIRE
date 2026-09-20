@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { getGeologyCapabilities } from '../game/geology-config.js';
 import { finalizeMatureGeologyResearch } from '../game/geology-research-service.js';
+import { getWorldGeologyHeatmap } from '../game/world-geology-field.js';
 
 const bodySchema = z.object({
   playerId: z.string().uuid(),
@@ -90,6 +91,21 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
+    // The shared geology field is independent of playerId. At equal scanner
+    // sensitivity, the same coordinates always yield the same prospect zones.
+    let heatmap;
+    try {
+      heatmap = await getWorldGeologyHeatmap({
+        lat: targetLat,
+        lng: targetLng,
+        radiusMeters: capabilities.scanRadiusMeters,
+        maxVisibleRarity: capabilities.maxVisibleRarity,
+      });
+    } catch (error) {
+      request.log.error(error);
+      return reply.code(500).send({ error: 'heatmap_generation_failed' });
+    }
+
     const confidence = 1 - capabilities.accuracyError;
     const client = await db.connect();
     try {
@@ -142,7 +158,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
           playerId,
           targetLng,
           targetLat,
-          capabilities.rangeMeters,
+          capabilities.scanRadiusMeters,
           capabilities.maxDepthMeters,
           skill.accuracy_level,
           skill.sensitivity_level,
@@ -316,8 +332,10 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
         capabilities: {
           ...capabilities,
           confidence: Math.round(confidence * 10_000) / 10_000,
-          scannedCellCount: 1 + 3 * capabilities.coverageRing * (capabilities.coverageRing + 1),
+          scannedCellCount: heatmap.cells.length,
         },
+        resourceProspects: heatmap.resources,
+        heatmap,
         deposits: knowledgeResult.rows.map((row) => ({
           id: row.deposit_id,
           h3Index: row.h3_index,

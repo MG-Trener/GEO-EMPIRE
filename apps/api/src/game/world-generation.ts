@@ -1,13 +1,14 @@
 import { db } from '../db.js';
+import { GEOLOGY_WORLD_SEED } from './geology-config.js';
 
 /**
  * Materialises visited H3 cells and deterministic geology lazily.
  *
  * A geological point is deliberately larger than a single resolution-12 game
- * cell. We keep at most one generated deposit per resolution-10 parent cell
- * (roughly one deposit for several dozen neighbouring gameplay cells). This prevents
- * the map around the player from turning into a carpet of overlapping deposits
- * while keeping exploration useful at starter ranges.
+ * cell. We keep at most one generated deposit per resolution-10 parent cell.
+ * Resource selection is derived from the same fixed multi-scale world field as
+ * the scan heatmap, so newly generated deposits are shared by every player and
+ * correlate with the reconnaissance overlay.
  */
 export async function ensureGeneratedWorldArea(
   lat: number,
@@ -43,9 +44,6 @@ export async function ensureGeneratedWorldArea(
     [lat, lng, resolution, ring],
   );
 
-  // Pick one representative gameplay cell inside every resolution-10 geology
-  // zone touched by this request. If that zone already contains a deposit (for
-  // example from an older world version), do not generate another one.
   await db.query(
     `
       WITH origin AS (
@@ -78,27 +76,64 @@ export async function ensureGeneratedWorldArea(
           )
       ),
       resource_pool AS (
-        SELECT
-          id,
-          code,
-          rarity,
-          row_number() OVER (ORDER BY id) AS rn,
-          count(*) OVER () AS pool_size
+        SELECT id, code, rarity
         FROM resources
         WHERE active = true
           AND category IN ('ore', 'fuel', 'construction', 'rare')
       ),
-      seeded AS (
+      resource_scores AS (
         SELECT
           eligible_cells.cell,
-          (hashtextextended(eligible_cells.geology_parent::text, 101) & 9223372036854775807::bigint) AS seed
+          eligible_cells.geology_parent,
+          resource_pool.id AS resource_id,
+          resource_pool.code,
+          resource_pool.rarity,
+          (
+            (
+              0.34 * (
+                ((hashtextextended(resource_pool.code || ':r7:' || h3_cell_to_parent(eligible_cells.geology_parent, 7)::text, $5)
+                  & 9223372036854775807::bigint) % 1000000)::numeric / 999999
+              )
+              + 0.29 * (
+                ((hashtextextended(resource_pool.code || ':r8:' || h3_cell_to_parent(eligible_cells.geology_parent, 8)::text, $5 + 11)
+                  & 9223372036854775807::bigint) % 1000000)::numeric / 999999
+              )
+              + 0.22 * (
+                ((hashtextextended(resource_pool.code || ':r9:' || h3_cell_to_parent(eligible_cells.geology_parent, 9)::text, $5 + 29)
+                  & 9223372036854775807::bigint) % 1000000)::numeric / 999999
+              )
+              + 0.15 * (
+                ((hashtextextended(resource_pool.code || ':r10:' || eligible_cells.geology_parent::text, $5 + 47)
+                  & 9223372036854775807::bigint) % 1000000)::numeric / 999999
+              )
+            )
+            * greatest(0.45::numeric, 1.0 - ((resource_pool.rarity - 1)::numeric * 0.055))
+          ) AS geology_score
         FROM eligible_cells
+        CROSS JOIN resource_pool
+      ),
+      ranked_resources AS (
+        SELECT
+          resource_scores.*,
+          row_number() OVER (
+            PARTITION BY geology_parent
+            ORDER BY geology_score DESC, rarity ASC, code
+          ) AS resource_rank
+        FROM resource_scores
       ),
       chosen AS (
-        SELECT seeded.cell, seeded.seed, resource_pool.id AS resource_id, resource_pool.rarity
-        FROM seeded
-        JOIN resource_pool
-          ON resource_pool.rn = 1 + (seeded.seed % resource_pool.pool_size::bigint)
+        SELECT
+          cell,
+          resource_id,
+          rarity,
+          (
+            hashtextextended(
+              geology_parent::text || ':' || code || ':deposit',
+              $5 + 101
+            ) & 9223372036854775807::bigint
+          ) AS seed
+        FROM ranked_resources
+        WHERE resource_rank = 1
       )
       INSERT INTO resource_deposits (
         cell_h3,
@@ -136,6 +171,6 @@ export async function ensureGeneratedWorldArea(
       FROM chosen
       ON CONFLICT (cell_h3, resource_id, depth_from_m, depth_to_m) DO NOTHING
     `,
-    [lat, lng, resolution, ring],
+    [lat, lng, resolution, ring, GEOLOGY_WORLD_SEED],
   );
 }
