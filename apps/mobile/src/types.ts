@@ -47,6 +47,7 @@ export type GeologySkillKey = 'range' | 'coverage' | 'depth' | 'accuracy' | 'sen
 export type GeologyCapabilities = {
   rangeMeters: number;
   coverageRing: number;
+  scanRadiusMeters: number;
   maxDepthMeters: number;
   accuracyError: number;
   maxVisibleRarity: number;
@@ -113,6 +114,7 @@ export type GeologyPreviewResponse = {
   capabilities: {
     rangeMeters: number;
     coverageRing: number;
+    scanRadiusMeters: number;
     maxDepthMeters: number;
     accuracyError: number;
     maxVisibleRarity: number;
@@ -122,12 +124,42 @@ export type GeologyPreviewResponse = {
   deposits: GeologyDeposit[];
 };
 
+export type WorldGeologyResourceProspect = {
+  code: string;
+  name: string;
+  rarity: number;
+  unit: string;
+  rank: number;
+  score: number;
+  averageIntensity: number;
+  peakIntensity: number;
+};
+
+export type WorldGeologyHeatmapCell = {
+  h3Index: string;
+  lat: number;
+  lng: number;
+  distanceMeters: number;
+  values: Array<{ resourceCode: string; intensity: number }>;
+};
+
+export type WorldGeologyHeatmap = {
+  worldVersion: 'geo-v1';
+  resolution: number;
+  radiusMeters: number;
+  center: { lat: number; lng: number };
+  resources: WorldGeologyResourceProspect[];
+  cells: WorldGeologyHeatmapCell[];
+};
+
 export type GeologyScanResponse = {
   scanId: string;
   playerId: string;
   playerPosition: { lat: number; lng: number };
   target: { lat: number; lng: number; distanceMeters: number };
   capabilities: GeologyPreviewResponse['capabilities'];
+  resourceProspects: WorldGeologyResourceProspect[];
+  heatmap: WorldGeologyHeatmap;
   deposits: Array<{
     id: string;
     h3Index: string;
