@@ -3,7 +3,12 @@
 // basic geology and commission a small pilot development before its first sale.
 export const TERRITORY_CLAIM_COST = 2_500;
 export const TERRITORY_LEASE_DAYS = 30;
-export const TERRITORY_INTERACTION_DISTANCE_METERS = 50;
+
+// Physical interaction radius around the player's live GPS position. Leasing a
+// parcel and committing construction both require the target H3 cell center to
+// be inside this radius; scanning keeps its own (much larger) geology radius.
+export const TERRITORY_INTERACTION_DISTANCE_METERS = 75;
+export const CONSTRUCTION_INTERACTION_DISTANCE_METERS = 75;
 
 export const STARTER_SOFT_CURRENCY = 100_000;
 export const STARTER_PREMIUM_CURRENCY = 50;
