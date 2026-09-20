@@ -1,4 +1,4 @@
-import { cellToParent } from 'h3-js';
+import { cellToLatLng, cellToParent } from 'h3-js';
 import type {
   CollectExtractionResponse,
   ExtractionStatus,
@@ -21,6 +21,8 @@ import type {
 } from './types';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:4000').replace(/\/$/, '');
+const EARTH_RADIUS_METERS = 6_371_000;
+export const PHYSICAL_BUILD_RADIUS_METERS = 75;
 
 export let DEMO_PLAYER_ID =
   process.env.EXPO_PUBLIC_DEMO_PLAYER_ID ?? '11111111-1111-4111-8111-111111111111';
@@ -30,6 +32,35 @@ export function setActivePlayerId(playerId: string): void {
 }
 
 const GEOLOGY_ZONE_RESOLUTION = 10;
+
+export function getDistanceToH3Center(lat: number, lng: number, h3Index: string): number | null {
+  try {
+    const [targetLat, targetLng] = cellToLatLng(h3Index);
+    const lat1 = lat * Math.PI / 180;
+    const lat2 = targetLat * Math.PI / 180;
+    const deltaLat = (targetLat - lat) * Math.PI / 180;
+    const deltaLng = (targetLng - lng) * Math.PI / 180;
+    const haversine = Math.sin(deltaLat / 2) ** 2
+      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+    return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(haversine)));
+  } catch {
+    return null;
+  }
+}
+
+function assertPhysicalRange(
+  lat: number,
+  lng: number,
+  h3Index: string,
+  action: 'аренды' | 'строительства',
+): void {
+  const distance = getDistanceToH3Center(lat, lng, h3Index);
+  if (distance !== null && distance > PHYSICAL_BUILD_RADIUS_METERS) {
+    throw new Error(
+      `Для ${action} подойдите ближе: ${Math.round(distance)} м до точки, допустимо ${PHYSICAL_BUILD_RADIUS_METERS} м`,
+    );
+  }
+}
 
 export function compactGeologyDeposits<T extends { h3Index: string }>(
   deposits: T[],
@@ -222,6 +253,7 @@ export async function claimTerritory(input: {
   playerLng: number;
   h3Index: string;
 }): Promise<{ status: string; h3Index: string; leaseUntil: string; charged: number; balance?: number }> {
+  assertPhysicalRange(input.playerLat, input.playerLng, input.h3Index, 'аренды');
   return requestJson(`${API_URL}/api/v1/territories/claim`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -242,6 +274,7 @@ export async function constructBuilding(input: {
   balance: number;
   interaction?: { distanceMeters: number; maxDistanceMeters: number };
 }> {
+  assertPhysicalRange(input.playerLat, input.playerLng, input.h3Index, 'строительства');
   return requestJson(`${API_URL}/api/v1/buildings/construct`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
