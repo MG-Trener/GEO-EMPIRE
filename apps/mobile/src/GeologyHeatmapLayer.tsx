@@ -1,20 +1,57 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
-import { cellToBoundary, cellToLatLng, gridDisk } from 'h3-js';
+import * as Location from 'expo-location';
+import { cellToBoundary } from 'h3-js';
 import type { FeatureCollection, Point, Polygon } from 'geojson';
-import { getKnownDeposits } from './api';
-import type { GeologyScanResponse, KnownDeposit } from './types';
+import type { GeologyScanResponse } from './types';
 
-type DepositCell = {
-  density: number;
-  rarity: number;
-  confidence: number;
-  weight: number;
+const EARTH_RADIUS_METERS = 6_371_000;
+export const BUILD_RADIUS_METERS = 75;
+
+type LatLng = { lat: number; lng: number };
+
+type HeatCell = {
+  intensity: number;
+  distanceMeters: number;
 };
 
-type ThermalPoint = DepositCell & {
-  influence: number;
-};
+function circleGeoJson(
+  id: string,
+  center: LatLng | null,
+  radiusMeters: number,
+): FeatureCollection<Polygon> {
+  if (!center || !Number.isFinite(radiusMeters) || radiusMeters <= 0) {
+    return { type: 'FeatureCollection', features: [] };
+  }
+
+  const points: [number, number][] = [];
+  const angularDistance = radiusMeters / EARTH_RADIUS_METERS;
+  const latRad = center.lat * Math.PI / 180;
+  const lngRad = center.lng * Math.PI / 180;
+
+  for (let step = 0; step <= 72; step += 1) {
+    const bearing = (step / 72) * Math.PI * 2;
+    const targetLat = Math.asin(
+      Math.sin(latRad) * Math.cos(angularDistance)
+      + Math.cos(latRad) * Math.sin(angularDistance) * Math.cos(bearing),
+    );
+    const targetLng = lngRad + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
+      Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(targetLat),
+    );
+    points.push([targetLng * 180 / Math.PI, targetLat * 180 / Math.PI]);
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      id,
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [points] },
+    }],
+  };
+}
 
 export function GeologyHeatmapLayer({
   scan,
@@ -25,67 +62,102 @@ export function GeologyHeatmapLayer({
   resourceCode: string | null;
   visible: boolean;
 }) {
-  const [knownDeposits, setKnownDeposits] = useState<KnownDeposit[]>([]);
+  const [livePlayerPosition, setLivePlayerPosition] = useState<LatLng | null>(null);
 
   useEffect(() => {
+    if (scan?.playerPosition) setLivePlayerPosition(scan.playerPosition);
+  }, [scan?.scanId, scan?.playerPosition]);
+
+  // The construction radius follows the actual device position even after the
+  // player has moved away from the point where reconnaissance was started.
+  useEffect(() => {
+    if (!visible) return undefined;
+
     let cancelled = false;
-    getKnownDeposits()
-      .then((result) => { if (!cancelled) setKnownDeposits(result.deposits); })
-      .catch(() => { if (!cancelled) setKnownDeposits([]); });
-    return () => { cancelled = true; };
-  }, [scan?.scanId]);
+    let subscription: Location.LocationSubscription | null = null;
 
-  const depositsByCell = useMemo(() => {
-    const byCell = new Map<string, DepositCell>();
-    if (!visible) return byCell;
+    const start = async () => {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (cancelled || permission.status !== 'granted') return;
 
-    const add = (input: {
-      h3Index: string;
-      code: string;
-      density: number;
-      confidence: number;
-      rarity: number;
-    }) => {
-      if (resourceCode && input.code !== resourceCode) return;
-      const density = Math.max(0.03, Math.min(1, Number(input.density ?? 0)));
-      const confidence = Math.max(0.08, Math.min(1, Number(input.confidence ?? 0)));
-      const rarity = Math.max(1, Number(input.rarity ?? 1));
-      const current = byCell.get(input.h3Index);
-      const weight = Math.max(0.08, Math.min(1, density * (0.42 + confidence * 0.58)));
-      byCell.set(input.h3Index, {
-        density: Math.max(density, current?.density ?? 0),
-        confidence: Math.max(confidence, current?.confidence ?? 0),
-        rarity: Math.max(rarity, current?.rarity ?? 1),
-        weight: Math.max(weight, current?.weight ?? 0),
-      });
+        const recent = await Location.getLastKnownPositionAsync({ maxAge: 15_000 });
+        if (recent && !cancelled) {
+          setLivePlayerPosition({
+            lat: recent.coords.latitude,
+            lng: recent.coords.longitude,
+          });
+        }
+
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 2_000,
+            distanceInterval: 5,
+          },
+          (location) => {
+            if (!cancelled) {
+              setLivePlayerPosition({
+                lat: location.coords.latitude,
+                lng: location.coords.longitude,
+              });
+            }
+          },
+        );
+      } catch {
+        // Main map already owns location UX. Keep the last known scan position
+        // rather than showing a second permission/error prompt here.
+      }
     };
 
-    for (const deposit of knownDeposits) {
-      add({
-        h3Index: deposit.h3Index,
-        code: deposit.resource.code,
-        density: deposit.estimates.density.value,
-        confidence: deposit.estimates.confidence,
-        rarity: deposit.resource.rarity,
+    void start();
+    return () => {
+      cancelled = true;
+      subscription?.remove();
+    };
+  }, [visible]);
+
+  const activeResource = resourceCode ?? scan?.resourceProspects?.[0]?.code ?? null;
+
+  const cellsByH3 = useMemo(() => {
+    const result = new Map<string, HeatCell>();
+    if (!visible || !scan || !activeResource) return result;
+
+    for (const cell of scan.heatmap.cells) {
+      const value = cell.values.find((item) => item.resourceCode === activeResource);
+      if (!value) continue;
+      result.set(cell.h3Index, {
+        intensity: Math.max(0, Math.min(1, Number(value.intensity ?? 0))),
+        distanceMeters: Number(cell.distanceMeters ?? 0),
       });
     }
 
-    for (const deposit of scan?.deposits ?? []) {
-      add({
-        h3Index: deposit.h3Index,
-        code: deposit.resource.code,
-        density: deposit.estimates.density?.value ?? 0,
-        confidence: deposit.estimates.confidence ?? 0,
-        rarity: deposit.resource.rarity ?? 1,
-      });
-    }
+    return result;
+  }, [activeResource, scan, visible]);
 
-    return byCell;
-  }, [knownDeposits, resourceCode, scan, visible]);
+  const thermalData = useMemo<FeatureCollection<Point>>(() => ({
+    type: 'FeatureCollection',
+    features: !scan ? [] : scan.heatmap.cells.flatMap((cell) => {
+      const sample = cellsByH3.get(cell.h3Index);
+      if (!sample) return [];
+      return [{
+        type: 'Feature' as const,
+        id: `thermal-${cell.h3Index}`,
+        properties: {
+          intensity: sample.intensity,
+          distanceMeters: sample.distanceMeters,
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [cell.lng, cell.lat],
+        },
+      }];
+    }),
+  }), [cellsByH3, scan]);
 
   const exactHexData = useMemo<FeatureCollection<Polygon>>(() => ({
     type: 'FeatureCollection',
-    features: [...depositsByCell.entries()].flatMap(([h3Index, sample]) => {
+    features: [...cellsByH3.entries()].flatMap(([h3Index, sample]) => {
       try {
         const boundary = cellToBoundary(h3Index, true) as [number, number][];
         if (!boundary.length) return [];
@@ -102,205 +174,168 @@ export function GeologyHeatmapLayer({
         return [];
       }
     }),
-  }), [depositsByCell]);
+  }), [cellsByH3]);
 
-  // A deposit can currently be represented by only one confirmed H3 cell.
-  // Expand that confirmed sample into a visual influence field for MapLibre's
-  // heatmap renderer. The centre keeps the measured density while surrounding
-  // cells decay smoothly; exact H3 outlines below still mark only confirmed cells.
-  const thermalData = useMemo<FeatureCollection<Point>>(() => {
-    const points = new Map<string, ThermalPoint>();
+  const scanRadiusData = useMemo(
+    () => circleGeoJson(
+      'geology-scan-radius',
+      scan?.heatmap.center ?? null,
+      scan?.heatmap.radiusMeters ?? 0,
+    ),
+    [scan],
+  );
 
-    for (const [h3Index, sample] of depositsByCell.entries()) {
-      try {
-        const near = new Set(gridDisk(h3Index, 1));
-        const field = gridDisk(h3Index, 2);
-        for (const cell of field) {
-          const influence = cell === h3Index ? 1 : near.has(cell) ? 0.64 : 0.3;
-          const density = Math.max(0.01, Math.min(1, sample.density * influence));
-          const weight = Math.max(0.025, Math.min(1, sample.weight * influence));
-          const current = points.get(cell);
-          if (!current || weight > current.weight) {
-            points.set(cell, {
-              density,
-              confidence: sample.confidence,
-              rarity: sample.rarity,
-              weight,
-              influence,
-            });
-          }
-        }
-      } catch {
-        // Invalid H3 data is ignored without breaking the whole map.
-      }
-    }
+  const constructionRadiusData = useMemo(
+    () => circleGeoJson('construction-radius', livePlayerPosition, BUILD_RADIUS_METERS),
+    [livePlayerPosition],
+  );
 
-    return {
-      type: 'FeatureCollection',
-      features: [...points.entries()].flatMap(([h3Index, sample]) => {
-        try {
-          const [lat, lng] = cellToLatLng(h3Index);
-          return [{
-            type: 'Feature' as const,
-            id: `thermal-${h3Index}`,
-            properties: sample,
-            geometry: { type: 'Point' as const, coordinates: [lng, lat] },
-          }];
-        } catch {
-          return [];
-        }
-      }),
-    };
-  }, [depositsByCell]);
-
-  const markerData = useMemo<FeatureCollection<Point>>(() => ({
+  const scanCenterData = useMemo<FeatureCollection<Point>>(() => ({
     type: 'FeatureCollection',
-    features: [...depositsByCell.entries()].flatMap(([h3Index, sample]) => {
-      try {
-        const [lat, lng] = cellToLatLng(h3Index);
-        return [{
-          type: 'Feature' as const,
-          id: `deposit-marker-${h3Index}`,
-          properties: sample,
-          geometry: { type: 'Point' as const, coordinates: [lng, lat] },
-        }];
-      } catch {
-        return [];
-      }
-    }),
-  }), [depositsByCell]);
+    features: scan ? [{
+      type: 'Feature',
+      id: 'scan-center',
+      properties: {},
+      geometry: {
+        type: 'Point',
+        coordinates: [scan.heatmap.center.lng, scan.heatmap.center.lat],
+      },
+    }] : [],
+  }), [scan]);
 
-  if (!visible || depositsByCell.size === 0) return null;
+  if (!visible) return null;
 
   return (
     <>
-      <GeoJSONSource id="resource-thermal-points" data={thermalData}>
+      {/* The small build zone is separate from reconnaissance and follows GPS. */}
+      <GeoJSONSource id="construction-radius-source" data={constructionRadiusData}>
         <Layer
-          id="resource-thermal-glow"
-          type="heatmap"
-          paint={{
-            'heatmap-weight': ['get', 'weight'],
-            'heatmap-intensity': [
-              'interpolate', ['linear'], ['zoom'],
-              10, 1.2,
-              14, 1.75,
-              18, 2.5,
-            ],
-            'heatmap-radius': [
-              'interpolate', ['linear'], ['zoom'],
-              10, 18,
-              12, 26,
-              14, 38,
-              16, 54,
-              18, 76,
-              20, 96,
-            ],
-            'heatmap-opacity': 0.94,
-            'heatmap-color': [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0, 'rgba(0,0,0,0)',
-              0.08, 'rgba(20,104,255,0.18)',
-              0.2, 'rgba(31,205,255,0.46)',
-              0.38, 'rgba(52,213,143,0.62)',
-              0.56, 'rgba(244,222,65,0.76)',
-              0.74, 'rgba(248,137,43,0.88)',
-              0.9, 'rgba(238,55,45,0.96)',
-              1, 'rgba(255,244,174,1)',
-            ],
-          } as never}
-        />
-      </GeoJSONSource>
-
-      <GeoJSONSource id="resource-density-hexes" data={exactHexData}>
-        <Layer
-          id="resource-density-fill"
+          id="construction-radius-fill"
           type="fill"
-          paint={{
-            'fill-color': [
-              'interpolate', ['linear'], ['get', 'density'],
-              0, '#166ee8',
-              0.2, '#20c9ee',
-              0.4, '#37cf91',
-              0.6, '#e2d848',
-              0.8, '#ef7e31',
-              1, '#ed4035',
-            ],
-            'fill-opacity': [
-              'interpolate', ['linear'], ['get', 'confidence'],
-              0, 0.28,
-              0.5, 0.48,
-              1, 0.7,
-            ],
-          } as never}
+          paint={{ 'fill-color': '#46e38b', 'fill-opacity': 0.045 } as never}
         />
         <Layer
-          id="resource-density-outline"
+          id="construction-radius-outline"
           type="line"
-          paint={{
-            'line-color': [
-              'interpolate', ['linear'], ['get', 'density'],
-              0, '#78c8ff',
-              0.5, '#ffe36c',
-              1, '#fff1b0',
-            ],
-            'line-width': [
-              'interpolate', ['linear'], ['zoom'],
-              10, 0.5,
-              14, 1.2,
-              18, 3,
-            ],
-            'line-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.25, 14, 0.58, 17, 0.95],
-          } as never}
+          paint={{ 'line-color': '#62f39c', 'line-width': 2.2, 'line-opacity': 0.9 } as never}
         />
       </GeoJSONSource>
 
-      <GeoJSONSource id="resource-deposit-markers" data={markerData}>
-        <Layer
-          id="resource-deposit-halo"
-          type="circle"
-          paint={{
-            'circle-radius': [
-              'interpolate', ['linear'], ['zoom'],
-              10, 3,
-              14, 7,
-              18, 15,
-            ],
-            'circle-color': [
-              'case',
-              ['>=', ['get', 'rarity'], 5], '#b96cff',
-              ['>=', ['get', 'rarity'], 3], '#f4bd42',
-              '#38d8ff',
-            ],
-            'circle-opacity': 0.2,
-            'circle-blur': 0.4,
-          } as never}
-        />
-        <Layer
-          id="resource-deposit-core"
-          type="circle"
-          paint={{
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 1.5, 14, 3.5, 18, 7],
-            'circle-color': [
-              'case',
-              ['>=', ['get', 'rarity'], 5], '#b96cff',
-              ['>=', ['get', 'rarity'], 3], '#f4bd42',
-              '#38d8ff',
-            ],
-            'circle-opacity': [
-              'interpolate', ['linear'], ['get', 'confidence'],
-              0, 0.65,
-              1, 1,
-            ],
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 1.5,
-          } as never}
-        />
-        <Layer
-          id="resource-deposit-center"
-          type="circle"
-          paint={{ 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 0.8, 18, 2.2], 'circle-color': '#ffffff', 'circle-opacity': 0.95 } as never}
-        />
-      </GeoJSONSource>
+      {scan ? (
+        <>
+          {/* Reconnaissance reveal boundary. Nothing geological is rendered outside it. */}
+          <GeoJSONSource id="geology-scan-radius-source" data={scanRadiusData}>
+            <Layer
+              id="geology-scan-radius-fill"
+              type="fill"
+              paint={{ 'fill-color': '#3bdfff', 'fill-opacity': 0.025 } as never}
+            />
+            <Layer
+              id="geology-scan-radius-outline"
+              type="line"
+              paint={{ 'line-color': '#57e8ff', 'line-width': 2.6, 'line-opacity': 0.9 } as never}
+            />
+          </GeoJSONSource>
+
+          {cellsByH3.size > 0 ? (
+            <>
+              <GeoJSONSource id="shared-geology-thermal-points" data={thermalData}>
+                <Layer
+                  id="shared-geology-thermal-glow"
+                  type="heatmap"
+                  paint={{
+                    'heatmap-weight': ['get', 'intensity'],
+                    'heatmap-intensity': [
+                      'interpolate', ['linear'], ['zoom'],
+                      10, 0.95,
+                      14, 1.45,
+                      18, 2.2,
+                    ],
+                    'heatmap-radius': [
+                      'interpolate', ['linear'], ['zoom'],
+                      10, 15,
+                      12, 22,
+                      14, 32,
+                      16, 46,
+                      18, 66,
+                      20, 84,
+                    ],
+                    'heatmap-opacity': 0.9,
+                    'heatmap-color': [
+                      'interpolate', ['linear'], ['heatmap-density'],
+                      0, 'rgba(0,0,0,0)',
+                      0.08, 'rgba(20,104,255,0.12)',
+                      0.2, 'rgba(31,205,255,0.42)',
+                      0.38, 'rgba(52,213,143,0.58)',
+                      0.56, 'rgba(244,222,65,0.74)',
+                      0.74, 'rgba(248,137,43,0.86)',
+                      0.9, 'rgba(238,55,45,0.95)',
+                      1, 'rgba(255,244,174,1)',
+                    ],
+                  } as never}
+                />
+              </GeoJSONSource>
+
+              <GeoJSONSource id="shared-geology-hexes" data={exactHexData}>
+                <Layer
+                  id="shared-geology-hex-fill"
+                  type="fill"
+                  paint={{
+                    'fill-color': [
+                      'interpolate', ['linear'], ['get', 'intensity'],
+                      0, '#166ee8',
+                      0.2, '#20c9ee',
+                      0.4, '#37cf91',
+                      0.6, '#e2d848',
+                      0.8, '#ef7e31',
+                      1, '#ed4035',
+                    ],
+                    'fill-opacity': [
+                      'interpolate', ['linear'], ['get', 'intensity'],
+                      0, 0.08,
+                      0.35, 0.18,
+                      0.7, 0.34,
+                      1, 0.52,
+                    ],
+                  } as never}
+                />
+                <Layer
+                  id="shared-geology-hex-outline"
+                  type="line"
+                  paint={{
+                    'line-color': [
+                      'interpolate', ['linear'], ['get', 'intensity'],
+                      0, '#57b6ff',
+                      0.5, '#ffe36c',
+                      1, '#fff1b0',
+                    ],
+                    'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.8, 18, 1.7],
+                    'line-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.12, 14, 0.32, 17, 0.62],
+                  } as never}
+                />
+              </GeoJSONSource>
+            </>
+          ) : null}
+
+          <GeoJSONSource id="geology-scan-center-source" data={scanCenterData}>
+            <Layer
+              id="geology-scan-center-halo"
+              type="circle"
+              paint={{ 'circle-radius': 10, 'circle-color': '#45e5ff', 'circle-opacity': 0.14 } as never}
+            />
+            <Layer
+              id="geology-scan-center-core"
+              type="circle"
+              paint={{
+                'circle-radius': 3.5,
+                'circle-color': '#d9fbff',
+                'circle-stroke-color': '#45e5ff',
+                'circle-stroke-width': 2,
+              } as never}
+            />
+          </GeoJSONSource>
+        </>
+      ) : null}
     </>
   );
 }

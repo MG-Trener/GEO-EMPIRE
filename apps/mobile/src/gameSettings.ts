@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'geo-empire.settings.v2';
+const STORAGE_KEY = 'geo-empire.settings.v3';
 
 export type GameSettings = {
   soundEnabled: boolean;
@@ -23,7 +23,9 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   showOwnedTerritories: true,
   showRivals: true,
   showIndustry: true,
-  showScanRange: true,
+  // Legacy preview only. The real scan/build radii are rendered from the
+  // server-confirmed reconnaissance result after the player presses Scan.
+  showScanRange: false,
   showMission: true,
 };
 
@@ -49,6 +51,9 @@ async function loadSettings(): Promise<void> {
           ...DEFAULT_GAME_SETTINGS,
           ...parsed,
           soundVolume: Math.min(1, Math.max(0, Number(parsed.soundVolume ?? DEFAULT_GAME_SETTINGS.soundVolume))),
+          // Do not restore the old pre-scan preview toggle. Stage 2 uses the
+          // actual scan result instead of showing unexplored geology in advance.
+          showScanRange: false,
         };
       }
     } catch {
