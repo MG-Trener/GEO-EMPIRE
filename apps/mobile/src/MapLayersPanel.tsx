@@ -7,8 +7,7 @@ type LayerKey =
   | 'showCellGrid'
   | 'showOwnedTerritories'
   | 'showRivals'
-  | 'showIndustry'
-  | 'showScanRange';
+  | 'showIndustry';
 
 type Props = {
   visible: boolean;
@@ -18,12 +17,11 @@ type Props = {
 };
 
 const layerRows: Array<{ key: LayerKey; title: string; description: string }> = [
-  { key: 'showResourceOverlay', title: 'Тепловая карта', description: 'Плотность найденных ресурсов' },
+  { key: 'showResourceOverlay', title: 'Результат разведки', description: 'Тепловая карта появляется только после сканирования' },
   { key: 'showCellGrid', title: 'Границы участков', description: 'Сетка H3 и выбранная ячейка' },
   { key: 'showOwnedTerritories', title: 'Мои территории', description: 'Арендованные компанией участки' },
   { key: 'showIndustry', title: 'Промышленные объекты', description: 'Шахты, карьеры и скважины' },
   { key: 'showRivals', title: 'Конкуренты', description: 'Чужие территории и объекты' },
-  { key: 'showScanRange', title: 'Радиус разведки', description: 'Доступная зона сканирования' },
 ];
 
 export function MapLayersPanel({ visible, settings, onToggle, onClose }: Props) {
@@ -64,7 +62,7 @@ export function MapLayersPanel({ visible, settings, onToggle, onClose }: Props) 
 
       <View style={styles.footer}>
         <Image source={gameAssets.utility.layers} style={styles.footerIcon} resizeMode="contain" />
-        <Text style={styles.footerText}>Изменения применяются к карте сразу.</Text>
+        <Text style={styles.footerText}>Радиусы разведки и строительства показываются автоматически после разведки.</Text>
       </View>
     </View>
   );
