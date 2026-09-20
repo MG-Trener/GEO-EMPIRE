@@ -13,8 +13,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 
 const RELEASE_API = 'https://api.github.com/repos/MG-Trener/GEO-EMPIRE/releases/latest';
+const RAW_APP_JSON = 'https://raw.githubusercontent.com/MG-Trener/GEO-EMPIRE/main/apps/mobile/app.json';
+const RELEASE_BASE = 'https://github.com/MG-Trener/GEO-EMPIRE/releases/download';
 const APK_MIME = 'application/vnd.android.package-archive';
-const CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const CHECK_INTERVAL_MS = 60 * 1000;
 
 type ReleaseAsset = {
   name: string;
@@ -27,7 +29,6 @@ type GitHubRelease = {
   tag_name: string;
   name: string | null;
   body: string | null;
-  html_url: string;
   prerelease: boolean;
   draft: boolean;
   assets: ReleaseAsset[];
@@ -35,7 +36,6 @@ type GitHubRelease = {
 
 type AvailableUpdate = {
   version: string;
-  title: string;
   notes: string;
   asset: ReleaseAsset;
 };
@@ -45,7 +45,7 @@ type UpdateState =
   | { kind: 'available'; update: AvailableUpdate }
   | { kind: 'downloading'; update: AvailableUpdate; progress: number }
   | { kind: 'installing'; update: AvailableUpdate }
-  | { kind: 'error'; update?: AvailableUpdate; message: string };
+  | { kind: 'error'; update: AvailableUpdate; message: string };
 
 function normalizeVersion(value: string | null | undefined): string {
   return String(value ?? '0.0.0').trim().replace(/^v/i, '').split('-')[0];
@@ -70,21 +70,68 @@ function isNewerVersion(candidate: string, current: string): boolean {
   return false;
 }
 
+function selectApk(release: GitHubRelease): ReleaseAsset | null {
+  const apks = release.assets.filter((asset) => asset.name.toLowerCase().endsWith('.apk'));
+  return apks.find((asset) => asset.name.toLowerCase().includes('geo-empire')) ?? apks[0] ?? null;
+}
+
+function fallbackAsset(version: string): ReleaseAsset {
+  const name = `geo-empire-v${version}.apk`;
+  return {
+    name,
+    browser_download_url: `${RELEASE_BASE}/v${version}/${name}`,
+    size: 0,
+    content_type: APK_MIME,
+  };
+}
+
+async function discoverLatestUpdate(currentVersion: string): Promise<AvailableUpdate | null> {
+  try {
+    const response = await fetch(`${RELEASE_API}?t=${Date.now()}`, {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (response.ok) {
+      const release = await response.json() as GitHubRelease;
+      if (!release.draft && !release.prerelease) {
+        const version = normalizeVersion(release.tag_name);
+        const asset = selectApk(release);
+        if (asset && isNewerVersion(version, currentVersion)) {
+          return {
+            version,
+            notes: (release.body ?? '').trim(),
+            asset,
+          };
+        }
+        if (!isNewerVersion(version, currentVersion)) return null;
+      }
+    }
+  } catch {
+    // Fall through to the raw app.json check below.
+  }
+
+  const response = await fetch(`${RAW_APP_JSON}?t=${Date.now()}`);
+  if (!response.ok) throw new Error(`Проверка версии: HTTP ${response.status}`);
+  const config = await response.json() as { expo?: { version?: string } };
+  const version = normalizeVersion(config.expo?.version);
+  if (!isNewerVersion(version, currentVersion)) return null;
+
+  return {
+    version,
+    notes: 'Новая сборка GEO EMPIRE готова к установке.',
+    asset: fallbackAsset(version),
+  };
+}
+
 function readableBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '';
   const mb = bytes / (1024 * 1024);
   return `${mb.toFixed(mb >= 10 ? 0 : 1)} МБ`;
 }
 
-function selectApk(release: GitHubRelease): ReleaseAsset | null {
-  const apks = release.assets.filter((asset) => asset.name.toLowerCase().endsWith('.apk'));
-  return apks.find((asset) => asset.name.toLowerCase().includes('geo-empire')) ?? apks[0] ?? null;
-}
-
 export function AppUpdateBanner() {
   const [state, setState] = useState<UpdateState>({ kind: 'hidden' });
-  const lastCheckAt = useRef(0);
   const checking = useRef(false);
+  const lastCheckAt = useRef(0);
   const currentVersion = normalizeVersion(Application.nativeApplicationVersion);
 
   const checkForUpdate = useCallback(async (force = false) => {
@@ -95,54 +142,26 @@ export function AppUpdateBanner() {
     checking.current = true;
     lastCheckAt.current = now;
     try {
-      const response = await fetch(RELEASE_API, {
-        headers: { Accept: 'application/vnd.github+json' },
-      });
-      if (response.status === 404) {
-        setState({ kind: 'hidden' });
-        return;
-      }
-      if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
-
-      const release = await response.json() as GitHubRelease;
-      if (release.draft || release.prerelease) {
-        setState({ kind: 'hidden' });
-        return;
-      }
-
-      const asset = selectApk(release);
-      const version = normalizeVersion(release.tag_name);
-      if (!asset || !isNewerVersion(version, currentVersion)) {
-        setState({ kind: 'hidden' });
-        return;
-      }
-
-      setState({
-        kind: 'available',
-        update: {
-          version,
-          title: release.name || `GEO EMPIRE v${version}`,
-          notes: (release.body ?? '').trim(),
-          asset,
-        },
-      });
-    } catch (error) {
-      // Background update checks must never interrupt gameplay.
-      if (force) {
-        setState({ kind: 'error', message: error instanceof Error ? error.message : 'Не удалось проверить обновление' });
-      }
+      const update = await discoverLatestUpdate(currentVersion);
+      setState(update ? { kind: 'available', update } : { kind: 'hidden' });
+    } catch {
+      // A failed background check must not interrupt gameplay. The next timer,
+      // foreground event or app restart will try both discovery sources again.
     } finally {
       checking.current = false;
     }
   }, [currentVersion]);
 
   useEffect(() => {
-    const timer = setTimeout(() => void checkForUpdate(), 2500);
+    const initial = setTimeout(() => void checkForUpdate(true), 1500);
+    const interval = setInterval(() => void checkForUpdate(), CHECK_INTERVAL_MS);
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') void checkForUpdate();
+      if (nextState === 'active') void checkForUpdate(true);
     });
+
     return () => {
-      clearTimeout(timer);
+      clearTimeout(initial);
+      clearInterval(interval);
       subscription.remove();
     };
   }, [checkForUpdate]);
@@ -156,21 +175,20 @@ export function AppUpdateBanner() {
         type: APK_MIME,
         flags: 1,
       });
-      // Android's package installer completes the update outside this process.
       setState({ kind: 'available', update });
-    } catch (error) {
+    } catch {
       try {
         const packageName = Application.applicationId ?? 'kz.geoempire.game';
         await IntentLauncher.startActivityAsync('android.settings.MANAGE_UNKNOWN_APP_SOURCES', {
           data: `package:${packageName}`,
         });
       } catch {
-        // Some Android skins do not expose the per-app screen through this intent.
+        // Some Android builds do not expose this settings screen directly.
       }
       setState({
         kind: 'error',
         update,
-        message: 'Разрешите GEO EMPIRE устанавливать приложения из этого источника и нажмите «Обновить» ещё раз.',
+        message: 'Разрешите GEO EMPIRE устанавливать приложения из этого источника и нажмите «Повторить».',
       });
     }
   }, []);
@@ -198,7 +216,7 @@ export function AppUpdateBanner() {
         },
       );
       const result = await task.downloadAsync();
-      if (!result?.uri) throw new Error('Файл обновления не был загружен');
+      if (!result?.uri) throw new Error('APK не был загружен');
       await installDownloadedApk(result.uri, update);
     } catch (error) {
       setState({
@@ -211,7 +229,7 @@ export function AppUpdateBanner() {
 
   if (Platform.OS !== 'android' || state.kind === 'hidden') return null;
 
-  const update = 'update' in state ? state.update : undefined;
+  const update = state.update;
   const progressPercent = state.kind === 'downloading' ? Math.round(state.progress * 100) : 0;
 
   return (
@@ -220,11 +238,9 @@ export function AppUpdateBanner() {
         <View style={styles.headerRow}>
           <View style={styles.flex}>
             <Text style={styles.eyebrow}>ОБНОВЛЕНИЕ GEO EMPIRE</Text>
-            <Text style={styles.title}>
-              {update ? `Доступна версия ${update.version}` : 'Проверка обновления'}
-            </Text>
+            <Text style={styles.title}>Доступна версия {update.version}</Text>
           </View>
-          {update ? <Text style={styles.size}>{readableBytes(update.asset.size)}</Text> : null}
+          {update.asset.size > 0 ? <Text style={styles.size}>{readableBytes(update.asset.size)}</Text> : null}
         </View>
 
         {state.kind === 'downloading' ? (
@@ -242,23 +258,16 @@ export function AppUpdateBanner() {
         ) : state.kind === 'error' ? (
           <Text style={styles.error}>{state.message}</Text>
         ) : (
-          <Text style={styles.status} numberOfLines={2}>
-            {update?.notes || 'Новая сборка готова. Установка сохранит игровые данные приложения.'}
-          </Text>
+          <Text style={styles.status} numberOfLines={2}>{update.notes}</Text>
         )}
 
         <View style={styles.actions}>
-          {update && state.kind !== 'downloading' && state.kind !== 'installing' ? (
+          {state.kind !== 'downloading' && state.kind !== 'installing' ? (
             <Pressable
               onPress={() => void downloadAndInstall(update)}
               style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
             >
               <Text style={styles.primaryText}>{state.kind === 'error' ? 'ПОВТОРИТЬ' : 'ОБНОВИТЬ'}</Text>
-            </Pressable>
-          ) : null}
-          {state.kind === 'error' && !update ? (
-            <Pressable onPress={() => void checkForUpdate(true)} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-              <Text style={styles.primaryText}>ПРОВЕРИТЬ ЕЩЁ РАЗ</Text>
             </Pressable>
           ) : null}
           {state.kind !== 'downloading' && state.kind !== 'installing' ? (
