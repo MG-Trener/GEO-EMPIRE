@@ -3,11 +3,18 @@ import * as Location from 'expo-location';
 import { GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
 import { cellToLatLng } from 'h3-js';
 import type { FeatureCollection, LineString, Point, Polygon } from 'geojson';
+import type { NavigationTarget } from './navigationTarget';
 
 export const BUILD_RADIUS_METERS = 75;
 const EARTH_RADIUS_METERS = 6_371_000;
 
 type LatLng = { lat: number; lng: number };
+
+type Props = {
+  selectedH3?: string;
+  navigationTarget?: NavigationTarget | null;
+  onTargetPress?: (h3Index: string) => void;
+};
 
 function distanceMeters(a: LatLng, b: LatLng): number {
   const lat1 = a.lat * Math.PI / 180;
@@ -49,10 +56,10 @@ function buildCircle(position: LatLng, radiusMeters: number): FeatureCollection<
   };
 }
 
-function selectedTarget(selectedH3: string | undefined, position: LatLng | null) {
-  if (!selectedH3 || !position) return null;
+function selectedTarget(h3Index: string | undefined, position: LatLng | null) {
+  if (!h3Index || !position) return null;
   try {
-    const [lat, lng] = cellToLatLng(selectedH3);
+    const [lat, lng] = cellToLatLng(h3Index);
     const target = { lat, lng };
     const distance = distanceMeters(position, target);
     return {
@@ -65,7 +72,7 @@ function selectedTarget(selectedH3: string | undefined, position: LatLng | null)
   }
 }
 
-export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
+export function BuildRadiusLayer({ selectedH3, navigationTarget, onTargetPress }: Props) {
   const [position, setPosition] = useState<LatLng | null>(null);
 
   useEffect(() => {
@@ -112,9 +119,11 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
     () => position ? buildCircle(position, BUILD_RADIUS_METERS) : null,
     [position],
   );
+
+  const activeH3 = navigationTarget?.h3Index ?? selectedH3;
   const target = useMemo(
-    () => selectedTarget(selectedH3, position),
-    [position, selectedH3],
+    () => selectedTarget(activeH3, position),
+    [activeH3, position],
   );
 
   const guideData = useMemo<FeatureCollection<LineString> | null>(() => {
@@ -124,7 +133,10 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
       features: [{
         type: 'Feature',
         id: 'physical-build-guide',
-        properties: { inRange: target.inRange ? 1 : 0 },
+        properties: {
+          inRange: target.inRange ? 1 : 0,
+          navigation: navigationTarget ? 1 : 0,
+        },
         geometry: {
           type: 'LineString',
           coordinates: [
@@ -134,22 +146,30 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
         },
       }],
     };
-  }, [position, target]);
+  }, [navigationTarget, position, target]);
 
   const targetData = useMemo<FeatureCollection<Point> | null>(() => {
     if (!target) return null;
     const roundedDistance = Math.max(0, Math.round(target.distance));
+    const label = navigationTarget
+      ? target.inRange
+        ? `ЦЕЛЬ ДОСТИГНУТА · ${navigationTarget.resourceName} · ${roundedDistance} м`
+        : `ЦЕЛЬ: ${navigationTarget.resourceName} · ${roundedDistance} м`
+      : target.inRange
+        ? `МОЖНО СТРОИТЬ · ${roundedDistance} м`
+        : `ПОДОЙДИТЕ БЛИЖЕ · ${roundedDistance} м`;
+
     return {
       type: 'FeatureCollection',
       features: [{
         type: 'Feature',
         id: 'physical-build-target',
         properties: {
+          h3Index: activeH3 ?? '',
           inRange: target.inRange ? 1 : 0,
+          navigation: navigationTarget ? 1 : 0,
           distanceMeters: roundedDistance,
-          label: target.inRange
-            ? `МОЖНО СТРОИТЬ · ${roundedDistance} м`
-            : `ПОДОЙДИТЕ БЛИЖЕ · ${roundedDistance} м`,
+          label,
         },
         geometry: {
           type: 'Point',
@@ -157,7 +177,7 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
         },
       }],
     };
-  }, [target]);
+  }, [activeH3, navigationTarget, target]);
 
   if (!radiusData) return null;
 
@@ -193,10 +213,15 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
               'line-color': [
                 'case',
                 ['==', ['get', 'inRange'], 1], '#62f0ad',
+                ['==', ['get', 'navigation'], 1], '#ffd15c',
                 '#f4bd42',
               ],
-              'line-width': 1.5,
-              'line-opacity': 0.72,
+              'line-width': [
+                'case',
+                ['==', ['get', 'navigation'], 1], 2.8,
+                1.5,
+              ],
+              'line-opacity': 0.82,
               'line-dasharray': [2, 2],
             } as never}
           />
@@ -204,12 +229,42 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
       ) : null}
 
       {targetData ? (
-        <GeoJSONSource id="physical-build-target" data={targetData}>
+        <GeoJSONSource
+          id="physical-build-target"
+          data={targetData}
+          onPress={(event) => {
+            if (!navigationTarget) return;
+            const h3Index = String(event.nativeEvent.features?.[0]?.properties?.h3Index ?? navigationTarget.h3Index);
+            if (h3Index) onTargetPress?.(h3Index);
+          }}
+        >
+          <Layer
+            id="physical-build-target-halo"
+            type="circle"
+            paint={{
+              'circle-radius': [
+                'case',
+                ['==', ['get', 'navigation'], 1], 12,
+                9,
+              ],
+              'circle-color': [
+                'case',
+                ['==', ['get', 'inRange'], 1], '#62f0ad',
+                '#f4bd42',
+              ],
+              'circle-opacity': 0.18,
+              'circle-blur': 0.2,
+            } as never}
+          />
           <Layer
             id="physical-build-target-dot"
             type="circle"
             paint={{
-              'circle-radius': 6,
+              'circle-radius': [
+                'case',
+                ['==', ['get', 'navigation'], 1], 7.5,
+                6,
+              ],
               'circle-color': [
                 'case',
                 ['==', ['get', 'inRange'], 1], '#62f0ad',
@@ -227,7 +282,7 @@ export function BuildRadiusLayer({ selectedH3 }: { selectedH3?: string }) {
               'text-size': ['interpolate', ['linear'], ['zoom'], 13, 7, 16, 9, 19, 11],
               'text-font': ['Noto Sans Bold'],
               'text-anchor': 'bottom',
-              'text-offset': [0, -1.05],
+              'text-offset': [0, -1.15],
               'text-allow-overlap': true,
               'text-ignore-placement': true,
             } as never}

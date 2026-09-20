@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { gameAssets, industrialIconForBuilding, resourceIconForCode } from './gameAssets';
+import {
+  clearNavigationTarget,
+  setNavigationTarget,
+  useNavigationTarget,
+} from './navigationTarget';
 import type { ExtractionStatus, GeologyScanResponse, WorldCell } from './types';
 
 type Props = {
@@ -78,6 +83,7 @@ export function StrategicCellSummary({
 }: Props) {
   const [now, setNow] = useState(Date.now());
   const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
+  const navigationTarget = useNavigationTarget();
 
   useEffect(() => {
     if (scanning && scanStartedAt === null) setScanStartedAt(Date.now());
@@ -130,6 +136,7 @@ export function StrategicCellSummary({
   const owned = cell.claim?.ownerId === playerId;
   const rival = Boolean(cell.claim && !owned);
   const primaryDeposit = deposits[0] ?? null;
+  const isNavigationTarget = Boolean(primaryDeposit && navigationTarget?.h3Index === cell.h3Index);
   const construction = constructionState(cell, now);
   const extractionCapable = isExtractionBuilding(cell.building?.code);
   const buildingReady = Boolean(cell.building && !construction.underConstruction);
@@ -279,6 +286,8 @@ export function StrategicCellSummary({
             <Text style={styles.production} numberOfLines={1}>
               {shortNumber(extraction.ratePerHour)} {extraction.deposit.resource.unit}/ч · склад {Math.round(liveExtraction.fill * 100)}%
             </Text>
+          ) : isNavigationTarget ? (
+            <Text style={styles.targetStep}>Цель маршрута активна · двигайтесь к точке</Text>
           ) : primaryDeposit && !cell.claim ? (
             <Text style={styles.nextStep}>Следующий шаг: взять участок</Text>
           ) : canDevelop ? (
@@ -299,6 +308,26 @@ export function StrategicCellSummary({
 
       <View style={styles.actions}>
         <QuickAction {...primaryAction} />
+        {primaryDeposit ? (
+          <QuickAction
+            source={gameAssets.utility.marker}
+            label={isNavigationTarget ? 'СНЯТЬ ЦЕЛЬ' : 'ЦЕЛЬ'}
+            accent={isNavigationTarget ? 'green' : 'amber'}
+            disabled={false}
+            onPress={() => {
+              if (isNavigationTarget) {
+                clearNavigationTarget();
+                return;
+              }
+              setNavigationTarget({
+                h3Index: cell.h3Index,
+                depositId: primaryDeposit.id,
+                resourceCode: primaryDeposit.resource.code,
+                resourceName: primaryDeposit.resource.name,
+              });
+            }}
+          />
+        ) : null}
         {!rival && primaryAction.onPress !== onScan ? (
           <QuickAction
             source={gameAssets.actions.research}
@@ -398,6 +427,7 @@ const styles = StyleSheet.create({
   production: { color: '#45ddb2', fontSize: 7, fontWeight: '800', marginTop: 2 },
   timerText: { color: '#f4c75b', fontSize: 7.2, fontWeight: '900', marginTop: 2 },
   nextStep: { color: '#69dff2', fontSize: 7, fontWeight: '800', marginTop: 2 },
+  targetStep: { color: '#f4c75b', fontSize: 7, fontWeight: '900', marginTop: 2 },
   infoIcon: { width: 28, height: 28, opacity: 0.76 },
   progressTrack: { height: 4, marginTop: 2, marginHorizontal: 2, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.08)' },
   progressFill: { height: '100%', borderRadius: 4 },
