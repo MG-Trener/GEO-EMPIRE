@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { getGeologyCapabilities } from '../game/geology-config.js';
 import { finalizeMatureGeologyResearch } from '../game/geology-research-service.js';
+import { ensureGeneratedWorldArea } from '../game/world-generation.js';
 import { getWorldGeologyHeatmap } from '../game/world-geology-field.js';
 
 const bodySchema = z.object({
@@ -91,6 +92,17 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
+    // Make sure the exact place being surveyed has materialised world geology.
+    // Eight resolution-12 rings are enough to seed every resolution-10 geology
+    // parent touching the player's immediate survey point without generating an
+    // unnecessarily large part of the world on every scan.
+    try {
+      await ensureGeneratedWorldArea(targetLat, targetLng, 12, 8);
+    } catch (error) {
+      request.log.error(error);
+      return reply.code(500).send({ error: 'world_generation_failed' });
+    }
+
     // The shared geology field is independent of playerId. At equal scanner
     // sensitivity, the same coordinates always yield the same prospect zones.
     let heatmap;
@@ -166,27 +178,39 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
       );
       const scanId = scanResult.rows[0].id;
 
-      // Older generated worlds can contain several resolution-12 deposits very
-      // close to one another. Treat all child cells of the same resolution-10
-      // parent as a single geological point and expose only its best visible
-      // representative. A scan offers at most three resource candidates.
+      // The thermal overlay and the actual deposit search now use the same
+      // physical radius. Previously the heatmap covered hundreds of metres but
+      // deposit discovery checked only a tiny resolution-12 H3 disk, which could
+      // leave a player standing in an orange/red anomaly with zero discoveries.
+      // Older worlds may also contain several deposits inside one resolution-10
+      // geology parent, so only the best representative of each parent is shown.
       await client.query(
         `
-          WITH target AS (
-            SELECT h3_lat_lng_to_cell(point($1, $2), 12) AS h3
-          ),
-          scanned_cells AS (
-            SELECT h3_grid_disk(target.h3, $3) AS cell FROM target
-          ),
-          ranked_visible AS (
+          WITH candidates AS (
             SELECT
-              d.*,
+              d.id,
+              d.cell_h3,
+              d.depth_from_m,
+              d.depth_to_m,
+              d.quantity_remaining,
+              d.density,
+              d.quality,
+              r.rarity,
+              ST_Distance(
+                ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+                ST_SetSRID(
+                  ST_MakePoint(
+                    (h3_cell_to_lat_lng(d.cell_h3))[1],
+                    (h3_cell_to_lat_lng(d.cell_h3))[0]
+                  ),
+                  4326
+                )::geography
+              ) AS distance_m,
               row_number() OVER (
                 PARTITION BY h3_cell_to_parent(d.cell_h3, 10)
                 ORDER BY d.depth_from_m, r.rarity, d.id
               ) AS geology_rank
-            FROM scanned_cells s
-            JOIN resource_deposits d ON d.cell_h3 = s.cell
+            FROM resource_deposits d
             JOIN resources r ON r.id = d.resource_id
             WHERE d.depth_from_m <= $4
               AND d.quantity_remaining > 0
@@ -195,9 +219,10 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
           ),
           visible AS (
             SELECT *
-            FROM ranked_visible
+            FROM candidates
             WHERE geology_rank = 1
-            ORDER BY depth_from_m ASC, density DESC, id
+              AND distance_m <= $3
+            ORDER BY distance_m ASC, depth_from_m ASC, density DESC, id
             LIMIT 3
           )
           INSERT INTO player_deposit_knowledge (
@@ -250,7 +275,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
         [
           targetLat,
           targetLng,
-          capabilities.coverageRing,
+          capabilities.scanRadiusMeters,
           capabilities.maxDepthMeters,
           capabilities.maxVisibleRarity,
           playerId,
@@ -261,13 +286,7 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
 
       const knowledgeResult = await client.query<KnowledgeRow>(
         `
-          WITH target AS (
-            SELECT h3_lat_lng_to_cell(point($1, $2), 12) AS h3
-          ),
-          scanned_cells AS (
-            SELECT h3_grid_disk(target.h3, $3) AS cell FROM target
-          ),
-          ranked AS (
+          WITH candidates AS (
             SELECT
               k.deposit_id::text,
               d.cell_h3::text AS h3_index,
@@ -283,12 +302,21 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
               k.estimated_density_min::text,
               k.estimated_density_max::text,
               k.confidence::text,
+              ST_Distance(
+                ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+                ST_SetSRID(
+                  ST_MakePoint(
+                    (h3_cell_to_lat_lng(d.cell_h3))[1],
+                    (h3_cell_to_lat_lng(d.cell_h3))[0]
+                  ),
+                  4326
+                )::geography
+              ) AS distance_m,
               row_number() OVER (
                 PARTITION BY h3_cell_to_parent(d.cell_h3, 10)
                 ORDER BY d.depth_from_m, r.rarity, d.id
               ) AS geology_rank
-            FROM scanned_cells s
-            JOIN resource_deposits d ON d.cell_h3 = s.cell
+            FROM resource_deposits d
             JOIN player_deposit_knowledge k ON k.deposit_id = d.id AND k.player_id = $4
             JOIN resources r ON r.id = d.resource_id
             WHERE d.depth_from_m <= $5
@@ -302,15 +330,16 @@ export async function geologyScanRoutes(app: FastifyInstance): Promise<void> {
             estimated_depth_from_m, estimated_depth_to_m,
             estimated_quality, estimated_density_min, estimated_density_max,
             confidence
-          FROM ranked
+          FROM candidates
           WHERE geology_rank = 1
-          ORDER BY h3_index, rarity, resource_code
+            AND distance_m <= $3
+          ORDER BY distance_m, rarity, resource_code
           LIMIT 3
         `,
         [
           targetLat,
           targetLng,
-          capabilities.coverageRing,
+          capabilities.scanRadiusMeters,
           playerId,
           capabilities.maxDepthMeters,
           capabilities.maxVisibleRarity,
