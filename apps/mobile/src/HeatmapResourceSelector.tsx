@@ -1,16 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { getKnownDeposits } from './api';
 import { resourceIconForCode } from './gameAssets';
-import type { GeologyScanResponse, KnownDeposit } from './types';
-
-type ResourceOption = {
-  code: string;
-  name: string;
-  cells: number;
-  maxDensity: number;
-  rarity: number;
-};
+import type { GeologyScanResponse } from './types';
 
 export function HeatmapResourceSelector({
   scan,
@@ -21,46 +12,10 @@ export function HeatmapResourceSelector({
   selectedCode: string | null;
   onSelect: (resourceCode: string) => void;
 }) {
-  const [knownDeposits, setKnownDeposits] = useState<KnownDeposit[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    getKnownDeposits()
-      .then((result) => { if (!cancelled) setKnownDeposits(result.deposits); })
-      .catch(() => { if (!cancelled) setKnownDeposits([]); });
-    return () => { cancelled = true; };
-  }, [scan?.scanId]);
-
-  const options = useMemo(() => {
-    const map = new Map<string, ResourceOption & { cellIds: Set<string> }>();
-
-    const add = (deposit: { resource: { code: string; name: string; rarity: number }; h3Index: string; density: number }) => {
-      const existing = map.get(deposit.resource.code) ?? {
-        code: deposit.resource.code,
-        name: deposit.resource.name,
-        cells: 0,
-        maxDensity: 0,
-        rarity: 1,
-        cellIds: new Set<string>(),
-      };
-      existing.cellIds.add(deposit.h3Index);
-      existing.cells = existing.cellIds.size;
-      existing.maxDensity = Math.max(existing.maxDensity, Number(deposit.density ?? 0));
-      existing.rarity = Math.max(existing.rarity, Number(deposit.resource.rarity ?? 1));
-      map.set(deposit.resource.code, existing);
-    };
-
-    for (const deposit of knownDeposits) {
-      add({ resource: deposit.resource, h3Index: deposit.h3Index, density: deposit.estimates.density.value });
-    }
-    for (const deposit of scan?.deposits ?? []) {
-      add({ resource: deposit.resource, h3Index: deposit.h3Index, density: deposit.estimates.density?.value ?? 0 });
-    }
-
-    return [...map.values()]
-      .map(({ cellIds: _cellIds, ...option }) => option)
-      .sort((a, b) => b.maxDensity - a.maxDensity || b.rarity - a.rarity || a.name.localeCompare(b.name, 'ru'));
-  }, [knownDeposits, scan]);
+  const options = useMemo(
+    () => (scan?.resourceProspects ?? []).slice(0, 3),
+    [scan],
+  );
 
   useEffect(() => {
     if (!options.length) return;
@@ -69,7 +24,7 @@ export function HeatmapResourceSelector({
     }
   }, [onSelect, options, selectedCode]);
 
-  if (!options.length) return null;
+  if (!scan || !options.length) return null;
 
   const active = options.find((option) => option.code === selectedCode) ?? options[0];
 
@@ -77,9 +32,9 @@ export function HeatmapResourceSelector({
     <View style={styles.root}>
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
-          <Text style={styles.label}>ТЕПЛОВАЯ КАРТА МЕСТОРОЖДЕНИЙ</Text>
+          <Text style={styles.label}>РЕЗУЛЬТАТ ГЕОРАЗВЕДКИ · ТОП-3</Text>
           <Text style={styles.summary} numberOfLines={1}>
-            {active.name} · {active.cells} яч. · пик {Math.round(active.maxDensity * 100)}% · R{active.rarity}
+            {active.name} · сред. {Math.round(active.averageIntensity * 100)}% · пик {Math.round(active.peakIntensity * 100)}%
           </Text>
         </View>
         <View style={styles.legend}>
@@ -106,7 +61,9 @@ export function HeatmapResourceSelector({
               <Image source={resourceIconForCode(option.code)} style={styles.icon} resizeMode="contain" />
               <View style={styles.itemText}>
                 <Text style={[styles.text, isActive && styles.textActive]} numberOfLines={1}>{option.name}</Text>
-                <Text style={styles.meta}>{option.cells} яч. · {Math.round(option.maxDensity * 100)}%</Text>
+                <Text style={styles.meta}>
+                  #{option.rank} · {Math.round(option.peakIntensity * 100)}% · score {Math.round(option.score * 100)}
+                </Text>
               </View>
               <View style={[
                 styles.rarity,
@@ -149,7 +106,7 @@ const styles = StyleSheet.create({
   list: { gap: 4, paddingTop: 5, paddingRight: 2 },
   item: {
     height: 34,
-    maxWidth: 155,
+    maxWidth: 168,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -161,8 +118,8 @@ const styles = StyleSheet.create({
   },
   itemActive: { backgroundColor: 'rgba(56,216,255,0.13)', borderColor: 'rgba(56,216,255,0.58)' },
   icon: { width: 26, height: 26 },
-  itemText: { flex: 1, minWidth: 58 },
-  text: { color: '#8296a0', fontSize: 7.2, fontWeight: '900', maxWidth: 88 },
+  itemText: { flex: 1, minWidth: 76 },
+  text: { color: '#8296a0', fontSize: 7.2, fontWeight: '900', maxWidth: 98 },
   textActive: { color: '#dff8ff' },
   meta: { color: '#667f8b', fontSize: 5.9, fontWeight: '800', marginTop: 1 },
   rarity: { minWidth: 24, height: 18, paddingHorizontal: 4, borderRadius: 7, justifyContent: 'center', alignItems: 'center', borderWidth: 1 },
