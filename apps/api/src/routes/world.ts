@@ -25,6 +25,8 @@ type WorldCellRow = {
   building_status: string | null;
   building_started_at: string | null;
   building_completed_at: string | null;
+  building_owner_id: string | null;
+  building_owner_name: string | null;
   extraction_resource_code: string | null;
 };
 
@@ -62,7 +64,7 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
           (h3_cell_to_lat_lng(cells.cell))[0] AS lat,
           (h3_cell_to_lat_lng(cells.cell))[1] AS lng,
           claims.player_id::text AS claim_owner_id,
-          claim_owner.display_name AS claim_owner_name,
+          COALESCE(claim_owner.company_name, claim_owner.display_name) AS claim_owner_name,
           claims.lease_until::text AS lease_until,
           buildings.id::text AS building_id,
           building_types.code AS building_code,
@@ -71,6 +73,8 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
           buildings.status AS building_status,
           buildings.started_at::text AS building_started_at,
           buildings.completed_at::text AS building_completed_at,
+          buildings.owner_player_id::text AS building_owner_id,
+          COALESCE(building_owner.company_name, building_owner.display_name) AS building_owner_name,
           extraction_resource.code AS extraction_resource_code
         FROM cells
         LEFT JOIN territory_claims AS claims
@@ -82,6 +86,8 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
           ON building_cells.cell_h3 = cells.cell
         LEFT JOIN buildings
           ON buildings.id = building_cells.building_id
+        LEFT JOIN players AS building_owner
+          ON building_owner.id = buildings.owner_player_id
         LEFT JOIN building_types
           ON building_types.id = buildings.building_type_id
         LEFT JOIN extraction_operations
@@ -119,6 +125,8 @@ export async function worldRoutes(app: FastifyInstance): Promise<void> {
             status: row.building_status,
             startedAt: row.building_started_at,
             completedAt: row.building_completed_at,
+            ownerId: row.building_owner_id,
+            ownerName: row.building_owner_name,
             resourceCode: row.extraction_resource_code,
           }
         : null,

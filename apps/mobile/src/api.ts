@@ -60,7 +60,11 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const message = body && typeof body === 'object' && 'error' in body ? String(body.error) : `HTTP ${response.status}`;
+    const message = body && typeof body === 'object' && 'message' in body
+      ? String(body.message)
+      : body && typeof body === 'object' && 'error' in body
+        ? String(body.error)
+        : `HTTP ${response.status}`;
     throw new Error(message);
   }
 

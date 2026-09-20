@@ -16,6 +16,9 @@ export type WorldCell = {
     status: string | null;
     startedAt: string | null;
     completedAt: string | null;
+    ownerId: string | null;
+    ownerName: string | null;
+    resourceCode: string | null;
   };
 };
 
