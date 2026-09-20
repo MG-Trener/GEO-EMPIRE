@@ -19,8 +19,13 @@ type BuildingTypeRow = {
 };
 
 type WalletRow = { soft_currency: string };
-type ClaimRow = { player_id: string };
-type ExistingBuildingRow = { building_id: string };
+type ClaimRow = { player_id: string; owner_name: string | null };
+type ExistingBuildingRow = {
+  building_id: string;
+  owner_player_id: string;
+  owner_name: string | null;
+  building_name: string | null;
+};
 type CreatedBuildingRow = { id: string; completed_at: string };
 
 export async function buildingRoutes(app: FastifyInstance): Promise<void> {
@@ -59,18 +64,35 @@ export async function buildingRoutes(app: FastifyInstance): Promise<void> {
 
       const claimResult = await client.query<ClaimRow>(
         `
-          SELECT player_id::text
-          FROM territory_claims
-          WHERE cell_h3 = $1::h3index AND lease_until > now()
-          FOR UPDATE
+          SELECT
+            c.player_id::text,
+            COALESCE(p.company_name, p.display_name) AS owner_name
+          FROM territory_claims c
+          LEFT JOIN players p ON p.id = c.player_id
+          WHERE c.cell_h3 = $1::h3index AND c.lease_until > now()
+          FOR UPDATE OF c
         `,
         [h3Index],
       );
 
       const claim = claimResult.rows[0];
-      if (!claim || claim.player_id !== playerId) {
+      if (!claim) {
         await client.query('ROLLBACK');
-        return reply.code(403).send({ error: 'territory_not_owned' });
+        return reply.code(403).send({
+          error: 'territory_not_owned',
+          message: 'Сначала арендуйте этот участок',
+        });
+      }
+      if (claim.player_id !== playerId) {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({
+          error: 'territory_owned_by_rival',
+          message: claim.owner_name
+            ? `Участок принадлежит компании «${claim.owner_name}»`
+            : 'Участок принадлежит другой компании',
+          ownerId: claim.player_id,
+          ownerName: claim.owner_name,
+        });
       }
 
       const typeResult = await client.query<BuildingTypeRow>(
@@ -96,12 +118,37 @@ export async function buildingRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const occupiedResult = await client.query<ExistingBuildingRow>(
-        `SELECT building_id::text FROM building_cells WHERE cell_h3 = $1::h3index FOR UPDATE`,
+        `
+          SELECT
+            bc.building_id::text,
+            b.owner_player_id::text,
+            COALESCE(p.company_name, p.display_name) AS owner_name,
+            bt.name_ru AS building_name
+          FROM building_cells bc
+          JOIN buildings b ON b.id = bc.building_id
+          LEFT JOIN players p ON p.id = b.owner_player_id
+          LEFT JOIN building_types bt ON bt.id = b.building_type_id
+          WHERE bc.cell_h3 = $1::h3index
+          FOR UPDATE OF bc, b
+        `,
         [h3Index],
       );
-      if (occupiedResult.rows[0]) {
+      const occupied = occupiedResult.rows[0];
+      if (occupied) {
         await client.query('ROLLBACK');
-        return reply.code(409).send({ error: 'cell_already_has_building' });
+        const rival = occupied.owner_player_id !== playerId;
+        return reply.code(409).send({
+          error: rival ? 'cell_occupied_by_rival_building' : 'cell_already_has_building',
+          message: rival
+            ? (occupied.owner_name
+                ? `На участке уже находится объект компании «${occupied.owner_name}»`
+                : 'На участке уже находится объект другой компании')
+            : 'На этом участке уже есть ваш объект',
+          ownerId: occupied.owner_player_id,
+          ownerName: occupied.owner_name,
+          buildingId: occupied.building_id,
+          buildingName: occupied.building_name,
+        });
       }
 
       const walletResult = await client.query<WalletRow>(
@@ -176,6 +223,13 @@ export async function buildingRoutes(app: FastifyInstance): Promise<void> {
       };
     } catch (error) {
       await client.query('ROLLBACK');
+      const dbError = error as { code?: string };
+      if (dbError.code === '23505') {
+        return reply.code(409).send({
+          error: 'cell_already_has_building',
+          message: 'Участок уже занят объектом. Обновите карту и выберите другой участок.',
+        });
+      }
       request.log.error(error);
       return reply.code(500).send({ error: 'construction_failed' });
     } finally {
