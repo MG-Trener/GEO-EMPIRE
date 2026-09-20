@@ -15,7 +15,17 @@ const claimBodySchema = z.object({
   h3Index: z.string().regex(/^[0-9a-f]+$/i),
 });
 
-type ExistingClaimRow = { player_id: string; lease_until: string };
+type ExistingClaimRow = {
+  player_id: string;
+  owner_name: string | null;
+  lease_until: string;
+};
+type OccupyingBuildingRow = {
+  building_id: string;
+  owner_player_id: string;
+  owner_name: string | null;
+  building_name: string | null;
+};
 type WalletRow = { soft_currency: string };
 type DistanceRow = { distance_m: number };
 type ClaimRow = { lease_until: string };
@@ -59,6 +69,7 @@ export async function territoryRoutesV2(app: FastifyInstance): Promise<void> {
     if (distanceMeters > TERRITORY_INTERACTION_DISTANCE_METERS) {
       return reply.code(403).send({
         error: 'territory_out_of_range',
+        message: `Для аренды нужно находиться не дальше ${TERRITORY_INTERACTION_DISTANCE_METERS} м от участка`,
         distanceMeters: Math.round(distanceMeters * 100) / 100,
         maxDistanceMeters: TERRITORY_INTERACTION_DISTANCE_METERS,
       });
@@ -86,10 +97,16 @@ export async function territoryRoutesV2(app: FastifyInstance): Promise<void> {
       );
 
       const existing = await client.query<ExistingClaimRow>(
-        `SELECT player_id::text, lease_until::text
-         FROM territory_claims
-         WHERE cell_h3 = $1::h3index AND lease_until > now()
-         FOR UPDATE`,
+        `
+          SELECT
+            c.player_id::text,
+            COALESCE(p.company_name, p.display_name) AS owner_name,
+            c.lease_until::text
+          FROM territory_claims c
+          LEFT JOIN players p ON p.id = c.player_id
+          WHERE c.cell_h3 = $1::h3index AND c.lease_until > now()
+          FOR UPDATE OF c
+        `,
         [h3Index],
       );
       const activeClaim = existing.rows[0];
@@ -98,7 +115,45 @@ export async function territoryRoutesV2(app: FastifyInstance): Promise<void> {
         if (activeClaim.player_id === playerId) {
           return reply.send({ status: 'already_owned', h3Index, leaseUntil: activeClaim.lease_until, charged: 0, claimCost });
         }
-        return reply.code(409).send({ error: 'territory_already_claimed' });
+        return reply.code(409).send({
+          error: 'territory_already_claimed',
+          message: activeClaim.owner_name
+            ? `Участок уже занят компанией «${activeClaim.owner_name}»`
+            : 'Участок уже занят другой компанией',
+          ownerId: activeClaim.player_id,
+          ownerName: activeClaim.owner_name,
+        });
+      }
+
+      const occupyingBuilding = await client.query<OccupyingBuildingRow>(
+        `
+          SELECT
+            b.id::text AS building_id,
+            b.owner_player_id::text,
+            COALESCE(p.company_name, p.display_name) AS owner_name,
+            bt.name_ru AS building_name
+          FROM building_cells bc
+          JOIN buildings b ON b.id = bc.building_id
+          LEFT JOIN players p ON p.id = b.owner_player_id
+          LEFT JOIN building_types bt ON bt.id = b.building_type_id
+          WHERE bc.cell_h3 = $1::h3index
+          FOR UPDATE OF bc, b
+        `,
+        [h3Index],
+      );
+      const building = occupyingBuilding.rows[0];
+      if (building && building.owner_player_id !== playerId) {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({
+          error: 'territory_occupied_by_rival_building',
+          message: building.owner_name
+            ? `На участке уже находится объект компании «${building.owner_name}»`
+            : 'На участке уже находится объект другой компании',
+          ownerId: building.owner_player_id,
+          ownerName: building.owner_name,
+          buildingId: building.building_id,
+          buildingName: building.building_name,
+        });
       }
 
       const walletResult = await client.query<WalletRow>(
@@ -127,7 +182,13 @@ export async function territoryRoutesV2(app: FastifyInstance): Promise<void> {
         `,
         [h3Index, playerId, TERRITORY_LEASE_DAYS],
       );
-      if (!claimResult.rows[0]) { await client.query('ROLLBACK'); return reply.code(409).send({ error: 'territory_already_claimed' }); }
+      if (!claimResult.rows[0]) {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({
+          error: 'territory_already_claimed',
+          message: 'Участок уже успела занять другая компания',
+        });
+      }
 
       await client.query(`UPDATE wallets SET soft_currency = soft_currency - $2, updated_at = now() WHERE player_id = $1`, [playerId, claimCost]);
       await client.query(
@@ -146,6 +207,10 @@ export async function territoryRoutesV2(app: FastifyInstance): Promise<void> {
         technologyDiscountPercent: Math.round((1 - modifiers.claimCostMultiplier) * 10_000) / 100,
         charged: claimCost,
         balance: currentBalance - claimCost,
+        interaction: {
+          distanceMeters: Math.round(distanceMeters * 100) / 100,
+          maxDistanceMeters: TERRITORY_INTERACTION_DISTANCE_METERS,
+        },
       };
     } catch (error) {
       await client.query('ROLLBACK');
