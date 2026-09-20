@@ -1,6 +1,19 @@
 export const GEOLOGY_RANGE_METERS = [30, 50, 75, 120, 180, 250, 350, 500, 750, 1000] as const;
 export const GEOLOGY_COVERAGE_RINGS = [0, 0, 1, 1, 2, 2, 3, 4, 5, 6] as const;
+
+// Coverage controls the physical radius of the geology heatmap around the scan
+// point. This is intentionally separate from rangeMeters: range determines how
+// far from the player a scan may be targeted, while scanRadiusMeters determines
+// how much ground the scanner reveals after the player starts reconnaissance.
+export const GEOLOGY_SCAN_RADIUS_METERS = [75, 100, 150, 220, 320, 450, 600, 750, 900, 1200] as const;
 export const GEOLOGY_MAX_DEPTH_METERS = [50, 75, 100, 150, 250, 400, 600, 900, 1300, 2000] as const;
+
+// Heatmap cells are shared world data derived only from coordinates, resource
+// code and this fixed world seed. Do not change the seed after production launch
+// unless a deliberate world reset is intended.
+export const GEOLOGY_WORLD_SEED = 42_619_784;
+export const GEOLOGY_HEATMAP_RESOLUTION = 11;
+export const GEOLOGY_HEATMAP_CELL_SPACING_METERS = 50;
 
 // The starter survey is deliberately good enough to validate a shallow common
 // deposit. Progression still matters for better estimates, but depth and
@@ -33,6 +46,7 @@ export function getGeologyCapabilities(skills: GeologySkills) {
   return {
     rangeMeters: atLevel(GEOLOGY_RANGE_METERS, skills.rangeLevel),
     coverageRing: atLevel(GEOLOGY_COVERAGE_RINGS, skills.coverageLevel),
+    scanRadiusMeters: atLevel(GEOLOGY_SCAN_RADIUS_METERS, skills.coverageLevel),
     maxDepthMeters: atLevel(GEOLOGY_MAX_DEPTH_METERS, skills.depthLevel),
     accuracyError: atLevel(GEOLOGY_ACCURACY_ERROR, skills.accuracyLevel),
     maxVisibleRarity: atLevel(GEOLOGY_SENSITIVITY_RARITY, skills.sensitivityLevel),
